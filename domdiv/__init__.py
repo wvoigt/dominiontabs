@@ -13,8 +13,9 @@ from draw import DividerDrawer
 LOCATION_CHOICES = ["tab", "body-top", "hide"]
 NAME_ALIGN_CHOICES = ["left", "right", "centre", "edge"]
 TAB_SIDE_CHOICES = ["left", "right", "left-alternate", "right-alternate",
-                    "centre", "full"]
+                    "left-alternate-text", "right-alternate-text", "centre", "full"]
 TEXT_CHOICES = ["card", "rules", "blank"]
+LINE_CHOICES = ["line", "dot", "cropmarks", "dot-cropmarks"]
 
 
 def add_opt(options, option, value):
@@ -257,6 +258,33 @@ def parse_opts(arglist):
                         action="store_true",
                         dest="notch",
                         help="same as --notch_length thickness 1.5")
+    parser.add_argument(
+        "--linetype",
+        choices=LINE_CHOICES,
+        dest="linetype",
+        default="line",
+        help="The dividor outline type. choices: line, dot, cropmarks, dot-cropmarks;"
+        " 'line' will print a solid line outlining the divider;"
+        " 'dot' will print a dot at each corner of the divider;"
+        " 'cropmarks' will print cropmarks for the divider;"
+        " 'dot-cropmarks' will combine 'dot' and 'cropmarks';"
+        " default:line")
+    parser.add_argument(
+        "--cropmarkLength",
+        type=float,
+        default=0.2,
+        help="Length of actual drawn cropmark in centimeters."
+        " default:0.2")
+    parser.add_argument(
+        "--cropmarkSpacing",
+        type=float,
+        default=0.1,
+        help="Spacing between card and the start of the cropmark in centimeters."
+        " default:0.1")
+    parser.add_argument("--optimize",
+                        action="store_true",
+                        dest="optimize",
+                        help="will optimize the number of dividers on a page.  Dividors may have mixed rotations.")
 
     options = parser.parse_args(arglist)
     if not options.cost:
@@ -274,6 +302,13 @@ def parse_opts(arglist):
 
     if options.notch:
         options.notch_length = 1.5
+
+    if options.linetype == 'dot-cropmarks':
+        options.linetype = 'dot'
+        options.cropmarks = True
+
+    options.cropmarkSpacing *= cm
+    options.cropmarkLength  *= cm
 
     return options
 

@@ -18,11 +18,186 @@ def split(l, n):
         i += n
     yield l[i:]
 
+class CardPlot(object):
+
+    def __init__(self, card, x=0, y=0, rotation=0, height=0, width=0, rightSide=False, page=0, lineType='line', textTypeFront="card", textTypeBack="rules", cropOnTop=False, cropOnBottom=False, cropOnLeft=False, cropOnRight=False):
+        self.card = card
+        self.x = x # x location of the lower left corner of the card on the page
+        self.y = y # y location of the lower left corner of the card on the page
+        self.rotation = rotation # of the card. 0, 90, 180, 270
+        self.lineType = lineType # Type of outline to use: line, dot, none
+        self.width = width # Width of the divider including any divider to divider spacing
+        self.height = height # Height of the divider including any divider to divider spacing
+        self.textTypeFront = textTypeFront #What card text to put on the front of the divider
+        self.textTypeBack = textTypeBack #What card text to put on the back of the divider
+        self.cropOnTop = cropOnTop #When true, cropmarks needed along TOP *printed* edge of the card
+        self.cropOnBottom = cropOnBottom #When true, cropmarks needed along BOTTOM *printed* edge of the card
+        self.cropOnLeft = cropOnLeft #When true, cropmarks needed along LEFT *printed* edge of the card
+        self.cropOnRight = cropOnRight #When true, cropmarks needed along RIGHT *printed* edge of the card
+        self.page = page # holds page number of this printed card
+        self.rightSide = rightSide # When true, the card tab is flipped to the "other" side
+        self.LEFT, self.RIGHT, self.TOP, self.BOTTOM = range(1, 5) # directional constants
+
+    def setXY(self, x, y, rotation=-1):
+        self.x = x
+        self.y = y
+        if rotation != -1:
+            self.rotation = rotation
+
+    def rotate(self, delta):
+        # rotate the card by amount delta
+        self.rotation = (self.rotation + delta) % 360
+
+    def flipFront2Back(self):
+        # Flip a card from front to back.  i.e., print the front of the divider on the page's back
+        # and print the back of the divider on the page's front.  So what does that mean...
+        # The tab moves from right(left) to left(right).
+        # And then the divider's text is moved to the other side of the page.
+        self.rightSide = not self.rightSide
+        self.textTypeFront, self.textTypeBack = self.textTypeBack, self.textTypeFront
+
+    def translate(self, canvas, page_width, backside=False):
+        # Translate the page x,y of the lower left of item, taking into account the rotation,
+        # and set up the canvas so that (0,0) is now at the lower lower left of the item
+        # and the item can be drawn as if it is in the "standard" orientation.
+        # So when done, the canvas is set and ready to draw the divider
+        x = self.x
+        y = self.y
+        rotation = self.rotation
+
+        if backside:
+            x = page_width - x - self.width
+
+        if self.rotation == 180:
+            x += self.width
+            y += self.height
+        elif self.rotation == 90:
+            if backside:
+                x += self.width
+                rotation = 270
+            else:
+                y += self.width
+        elif self.rotation == 270:
+            if backside:
+                x += self.width - self.height
+                y += self.width
+                rotation = 90
+            else:
+                x += self.height
+
+        rotation = 360 - rotation % 360 # ReportLab rotates counter clockwise, not clockwise.
+        canvas.translate(x, y)
+        canvas.rotate(rotation)
+
+    def translateCropmarkEnable(self, side):
+        # Returns True if a cropmark is needed on that side of the card
+        # Takes into account the card's rotation, if the tab is flipped, if the card is next to an edge, etc.
+
+        # First the rotation. The page does not change even if the card is rotated.
+        # So need to translate page side to the actual drawn card edge
+        if self.rotation == 0:
+            sideTop    = self.cropOnTop
+            sideBottom = self.cropOnBottom
+            sideRight  = self.cropOnRight
+            sideLeft   = self.cropOnLeft
+        elif self.rotation == 90:
+            sideTop    = self.cropOnRight
+            sideBottom = self.cropOnLeft
+            sideRight  = self.cropOnBottom
+            sideLeft   = self.cropOnTop
+        elif self.rotation == 180:
+            sideTop    = self.cropOnBottom
+            sideBottom = self.cropOnTop
+            sideRight  = self.cropOnLeft
+            sideLeft   = self.cropOnRight
+        elif self.rotation == 270:
+            sideTop    = self.cropOnLeft
+            sideBottom = self.cropOnRight
+            sideRight  = self.cropOnTop
+            sideLeft   = self.cropOnBottom
+
+        # Now take care of the case where the tab has been flipped
+        if self.rightSide:
+            sideLeft, sideRight = sideRight, sideLeft
+
+        # Now can return the proper value based upon what side is requested
+        if side == self.TOP:
+            return sideTop
+        elif side == self.BOTTOM:
+            return sideBottom
+        elif side == self.RIGHT:
+            return sideRight
+        elif side == self.LEFT:
+            return sideLeft
+        else:
+            return False # just in case
+
+class Plotter(object):
+
+    def __init__(self, canvas, x=0, y=0, cropmarkLength=-1, cropmarkSpacing=-1):
+        self.canvas = canvas
+        self.x = x
+        self.y = y
+        self.LEFT, self.RIGHT, self.TOP, self.BOTTOM, self.LINE, self.NO_LINE, self.DOT = range(1, 8) # Constants
+        if cropmarkLength < 0:
+            cropmarkLength = 0.2
+        if cropmarkSpacing < 0:
+            cropmarkSpacing = 0.1
+        self.CropMarkLength = cropmarkLength  # The length of a cropmark
+        self.CropMarkSpacing = cropmarkSpacing # The spacing between the cut point and the start of the cropmark
+        self.DotSize = 0.2 #Size of dot marks
+
+    def setXY(self, x, y):
+        self.x = x
+        self.y = y
+
+    def getXY(self):
+        return (self.x, self.y)
+
+    def move(self, delta_x=0, delta_y=0, pen=False):
+        if pen is False:
+            pen = self.NO_LINE
+        x, y = self.getXY() # get current point
+        new_x = x + delta_x # calculate new point from delta
+        new_y = y + delta_y
+        if pen == self.LINE:
+            self.canvas.line(x, y, new_x, new_y)
+        if pen == self.DOT:
+             self.canvas.circle(new_x, new_y, self.DotSize)
+        self.setXY(new_x, new_y) # save the new point
+
+    def cropmark(self, enabled, direction):
+        # From current point, draw a cropmark in the correct direction and return to starting point
+        if enabled:
+            x, y = self.getXY() # Saving for later
+
+            if direction == self.TOP:
+                self.move(0, self.CropMarkSpacing)
+                self.move(0, self.CropMarkLength, self.LINE)
+            if direction == self.BOTTOM:
+                self.move(0, -self.CropMarkSpacing)
+                self.move(0, -self.CropMarkLength, self.LINE)
+            if direction == self.RIGHT:
+                self.move(self.CropMarkSpacing, 0)
+                self.move(self.CropMarkLength, 0, self.LINE)
+            if direction == self.LEFT:
+                self.move(-self.CropMarkSpacing, 0)
+                self.move(-self.CropMarkLength, 0, self.LINE)
+            self.setXY(x, y) # Restore to starting point
 
 class DividerDrawer(object):
     def __init__(self):
-        self.odd = True
         self.canvas = None
+
+    def draw(self, cards, options):
+        self.options = options
+
+        self.registerFonts()
+        self.canvas = canvas.Canvas(
+            options.outfile,
+            pagesize=(options.paperwidth, options.paperheight))
+        self.drawDividers(cards)
+        self.canvas.save()
 
     def registerFonts(self):
         try:
@@ -45,7 +220,21 @@ class DividerDrawer(object):
     def wantCentreTab(self, card):
         return (card.isExpansion() and self.options.centre_expansion_dividers) or self.options.tab_side == "centre"
 
-    def getOutline(self, card):
+    def drawOutline(self, item, isBack=False):
+        # draw outline or cropmarks
+        if isBack and not self.options.cropmarks:
+            return
+        self.canvas.saveState()
+        self.canvas.setLineWidth(self.options.linewidth)
+
+        if (item.rightSide and not isBack) or (not item.rightSide and isBack):
+            # the tab is on the other side
+            self.canvas.translate(self.options.dividerWidth, 0)
+            self.canvas.scale(-1, 1)
+
+        plotter = Plotter(self.canvas,
+                          cropmarkLength=self.options.cropmarkLength,
+                          cropmarkSpacing=self.options.cropmarkSpacing)
 
         dividerWidth = self.options.dividerWidth
         dividerHeight = self.options.dividerHeight
@@ -58,151 +247,210 @@ class DividerDrawer(object):
         theTabHeight = dividerHeight - dividerBaseHeight
         theTabWidth = self.options.labelWidth
 
-        if self.wantCentreTab(card):
+        if self.wantCentreTab(item.card):
             side_2_tab = (dividerWidth - theTabWidth) / 2
         else:
             side_2_tab = 0
 
         nonTabWidth = dividerWidth - tabLabelWidth - side_2_tab
 
-        def DeltaXYtoLines(delta):
-            result = []
-            started = False
-            for x, y in delta:
-                if not started:
-                    last_x = x
-                    last_y = y
-                    started = True
-                else:
-                    result.append((last_x, last_y, last_x + x, last_y + y))
-                    last_x = last_x + x
-                    last_y = last_y + y
-            return result
+        if item.lineType.lower() == 'line':
+            lineType = plotter.LINE
+        elif item.lineType.lower() == 'dot':
+            lineType = plotter.DOT
+        else:
+            lineType = plotter.NO_LINE
 
-        self.canvas.saveState()
+        intermediatePoint1 = lineType
+        intermediatePoint2 = lineType
+        intermediatePoint3 = lineType
+        intermediatePoint4 = lineType
+        intermediatePoint5 = lineType
+
+        if lineType == plotter.DOT:
+            intermediatePoint1 = plotter.NO_LINE
+        if side_2_tab == 0:
+            intermediatePoint2 = intermediatePoint1
+        if notch_width2 == 0:
+            intermediatePoint3 = intermediatePoint1
+        if notch_width1 == 0:
+            intermediatePoint4 = intermediatePoint1
+        if notch_height == 0:
+            intermediatePoint5 = intermediatePoint1
+
+        cropRightEnable  = self.options.cropmarks and item.translateCropmarkEnable(item.RIGHT)
+        cropLeftEnable   = self.options.cropmarks and item.translateCropmarkEnable(item.LEFT)
+        cropTopEnable    = self.options.cropmarks and item.translateCropmarkEnable(item.TOP)
+        cropBottomEnable = self.options.cropmarks and item.translateCropmarkEnable(item.BOTTOM)
 
         if not self.options.wrapper:
             # Normal Card Outline
-            #    +                      F+-------------------+E
+            #    |                       |                   |     |
+            #  Z-+                      F+-------------------+E    +-Y
             #                            |                   |
-            #   H+-----------------------+G                 D+-----+C
-            #    |                                                 |
+            #  H-+-----------------------+                   2-----2-C
+            #    |                       G                   D     |
             #    |             Generic Divider                     |
             #    |          Tab Centered or to the Side            |
             #    |                                                 |
-            #   A+-------------------------------------------------+B
-            #             delta x          delta y
-            delta = [(0, 0),  # to A
-                     (dividerWidth, 0),  # A to B
-                     (0, dividerBaseHeight),  # B to C
-                     (-side_2_tab, 0),  # C to D
-                     (0, theTabHeight),  # D to E
-                     (-theTabWidth, 0),  # E to F
-                     (0, -theTabHeight),  # F to G
-                     (-nonTabWidth, 0),  # G to H
-                     (0, -dividerBaseHeight)]  # H to A
-            self.canvas.lines(DeltaXYtoLines(delta))
+            #  A-+-----------------------1-------------------1-----o-B
+            #    |                      V|                  W|     |
+            #
+            plotter.move(0, 0) # to A
+            plotter.cropmark( cropLeftEnable, plotter.LEFT)
+            plotter.cropmark( cropBottomEnable, plotter.BOTTOM)
+            plotter.move(nonTabWidth, 0, intermediatePoint1) # A to V
+            plotter.cropmark( cropBottomEnable, plotter.BOTTOM)
+            plotter.move(theTabWidth, 0, intermediatePoint1) # V to W
+            plotter.cropmark( cropBottomEnable, plotter.BOTTOM)
+            plotter.move(side_2_tab, 0, lineType) # W to B
+            plotter.cropmark( cropBottomEnable, plotter.BOTTOM)
+            plotter.cropmark( cropRightEnable, plotter.RIGHT)
+            plotter.move(0, dividerBaseHeight, intermediatePoint2) # B to C
+            plotter.cropmark( cropRightEnable, plotter.RIGHT)
+            plotter.move(-side_2_tab, 0, intermediatePoint2) # C to D
+            plotter.move(0, theTabHeight, lineType) # D to E
+            plotter.cropmark( cropTopEnable, plotter.TOP)
+            plotter.move(side_2_tab, 0, plotter.NO_LINE) # E to Y
+            plotter.cropmark( cropTopEnable, plotter.TOP)
+            plotter.cropmark( cropRightEnable, plotter.RIGHT)
+            plotter.move(-side_2_tab, 0, plotter.NO_LINE) # Y to E
+            plotter.move(-theTabWidth, 0, lineType) # E to F
+            plotter.cropmark( cropTopEnable, plotter.TOP)
+            plotter.move(0, -theTabHeight, lineType) # F to G
+            plotter.move(-nonTabWidth, 0, lineType) # G to H
+            plotter.cropmark( cropLeftEnable, plotter.LEFT)
+            plotter.move(0, theTabHeight, plotter.NO_LINE) # H to Z
+            plotter.cropmark( cropTopEnable, plotter.TOP)
+            plotter.cropmark( cropLeftEnable, plotter.LEFT)
+            plotter.move(0, -theTabHeight, plotter.NO_LINE) # Z to H
+            plotter.move(0, -dividerBaseHeight, lineType) # H to A
 
         else:
             # Card Wrapper Outline
             notch_width3 = notch_width1  # thumb notch width: bottom away from tab
-            stackHeight = card.getStackHeight(self.options.thickness)
+            stackHeight = item.card.getStackHeight(self.options.thickness)
             body_minus_notches = dividerBaseHeight - (2.0 * notch_height)
             tab_2_notch = dividerWidth - theTabWidth - side_2_tab - notch_width1
             if (tab_2_notch < 0):
                 tab_2_notch = dividerWidth - theTabWidth - side_2_tab
                 notch_width1 = 0
-            #    +                            U+-------------------+T   +
+            #    |       |                     |                   |    |
+            # MM-+       +LL                  U+-------------------+T   +-KK
             #                                  |                   |
-            #    +                            V+. . . . . . . . . .+S   +
+            #                                 V1...................1S
             #                                  |                   |
-            #    +      X+---------------------+W . . . . . . . . R+----+Q
-            #            |                                              |
-            #   Z+-------+Y                                             +P
+            # NN-+      X5---------------------+...................2----2-Q
+            #            |                    W                     R   |
+            #  Z-+-------5Y                                             1-P
             #    |                                                      |
             #    |                    Generic Wrapper                   |
             #    |                      Normal Side                     |
             #    |                                                      |
-            #  AA+-------+BB                                   N+-------+O
+            # AA-4-------4BB                                   N3-------3-O
             #            |                                      |
-            #    +       +CC. . . . . . . . . . . . . . . . . .M+       +
+            #    +       1CC...................................M1       +
             #            |                                      |
-            #    +       +DD. . . . . . . . . . . . . . . . . .L+       +
+            #    +       1DD...................................L1       +
             #            |                                      |
-            #  FF+-------+EE                                   K+-------+J
+            # FF-4-------4EE                                   K3-------3-J
             #    |                                                      |
             #    |                      Reverse Side                    |
             #    |                       rotated 180                    |
             #    |                                                      |
-            #   A+-------+B                                             +I
-            #            |                                              |
-            #    +      C+---------------------+D                 G+----+H
+            #  A-+-------5B                                             1-I
+            #            |                    D                     G   |
+            # GG-+      C5---------------------+                   2----2-H
             #                                  |                   |
-            #    +                            E+-------------------+F   +
-            #
-            #           delta x              delta y
-            delta = [(0, theTabHeight + notch_height),  # to A
-                     (notch_width1, 0),  # A  to B
-                     (0, -notch_height),  # B  to C
-                     (tab_2_notch, 0),  # C  to D
-                     (0, -theTabHeight),  # D  to E
-                     (theTabWidth, 0),  # E  to F
-                     (0, theTabHeight),  # F  to G
-                     (side_2_tab, 0),  # G  to H
-                     (0, notch_height),  # H  to I
-                     (0, body_minus_notches),  # I  to J
-                     (-notch_width2, 0),  # J  to K
-                     (0, notch_height),  # K  to L
-                     (0, stackHeight),  # L  to M
-                     (0, notch_height),  # M  to N
-                     (notch_width2, 0),  # N  to O
-                     (0, body_minus_notches),  # O  to P
-                     (0, notch_height),  # P  to Q
-                     (-side_2_tab, 0),  # Q  to R
-                     (0, stackHeight),  # R  to S
-                     (0, theTabHeight),  # S  to T
-                     (-theTabWidth, 0),  # T  to U
-                     (0, -theTabHeight),  # U  to V
-                     (0, -stackHeight),  # V  to W
-                     (-tab_2_notch, 0),  # W  to X
-                     (0, -notch_height),  # X  to Y
-                     (-notch_width1, 0),  # Y  to Z
-                     (0, -body_minus_notches),  # Z  to AA
-                     (notch_width3, 0),  # AA to BB
-                     (0, -notch_height),  # BB to CC
-                     (0, -stackHeight),  # CC to DD
-                     (0, -notch_height),  # DD to EE
-                     (-notch_width3, 0),  # EE to FF
-                     (0, -body_minus_notches)]  # FF to A
+            # HH-+       +II                  E+-------------------+F   +-JJ
+            #    |       |                     |                   |    |
+            plotter.move(0, 0, plotter.NO_LINE) # to HH
+            plotter.cropmark( cropBottomEnable, plotter.BOTTOM)
+            plotter.cropmark( cropLeftEnable, plotter.LEFT)
+            plotter.move(0, theTabHeight, plotter.NO_LINE) # HH to GG
+            plotter.cropmark( cropLeftEnable, plotter.LEFT)
+            plotter.move(0, notch_height, plotter.NO_LINE) # GG to A
+            plotter.cropmark( cropLeftEnable, plotter.LEFT)
+            plotter.move(notch_width1, 0, intermediatePoint5)  # A  to B
+            plotter.move(0, -notch_height, intermediatePoint5)  # B  to C
+            plotter.move(0, -theTabHeight, plotter.NO_LINE) # C to II
+            plotter.cropmark( cropBottomEnable, plotter.BOTTOM)
+            plotter.move(0, theTabHeight, plotter.NO_LINE) # II to C
+            plotter.move(tab_2_notch, 0, lineType)  # C  to D
+            plotter.move(0, -theTabHeight, lineType)  # D  to E
+            plotter.cropmark( cropBottomEnable, plotter.BOTTOM)
+            plotter.move(theTabWidth, 0, lineType)  # E  to F
+            plotter.cropmark( cropBottomEnable, plotter.BOTTOM)
+            plotter.move(0, theTabHeight, intermediatePoint2)  # F  to G
+            plotter.move(side_2_tab, 0, intermediatePoint2)  # G  to H
+            plotter.cropmark( cropRightEnable, plotter.RIGHT)
+            plotter.move(0, -theTabHeight, plotter.NO_LINE) # H to JJ
+            plotter.cropmark( cropBottomEnable, plotter.BOTTOM)
+            plotter.cropmark( cropRightEnable, plotter.RIGHT)
+            plotter.move(0, theTabHeight, plotter.NO_LINE) # JJ to H
+            plotter.move(0, notch_height, intermediatePoint1)  # H  to I
+            plotter.cropmark( cropRightEnable, plotter.RIGHT)
+            plotter.move(0, body_minus_notches, intermediatePoint3)  # I  to J
+            plotter.cropmark( cropRightEnable, plotter.RIGHT)
+            plotter.move(-notch_width2, 0, intermediatePoint3)  # J  to K
+            plotter.move(0, notch_height, intermediatePoint1)  # K  to L
+            plotter.move(0, stackHeight, intermediatePoint1)  # L  to M
+            plotter.move(0, notch_height, intermediatePoint3)  # M  to N
+            plotter.move(notch_width2, 0, intermediatePoint3)  # N  to O
+            plotter.cropmark( cropRightEnable, plotter.RIGHT)
+            plotter.move(0, body_minus_notches, intermediatePoint1)  # O  to P
+            plotter.cropmark( cropRightEnable, plotter.RIGHT)
+            plotter.move(0, notch_height, intermediatePoint2)  # P  to Q
+            plotter.cropmark( cropRightEnable, plotter.RIGHT)
+            plotter.move(-side_2_tab, 0, intermediatePoint2)  # Q  to R
+            plotter.move(0, stackHeight, intermediatePoint1)  # R  to S
+            plotter.move(0, theTabHeight, lineType)  # S  to T
+            plotter.cropmark( cropTopEnable, plotter.TOP)
+            plotter.move(side_2_tab, 0, plotter.NO_LINE) # T to KK
+            plotter.cropmark( cropRightEnable, plotter.RIGHT)
+            plotter.cropmark( cropTopEnable, plotter.TOP)
+            plotter.move(-side_2_tab, 0, plotter.NO_LINE) # KK to T
+            plotter.move(-theTabWidth, 0, lineType)  # T  to U
+            plotter.cropmark( cropTopEnable, plotter.TOP)
+            plotter.move(-tab_2_notch, 0, plotter.NO_LINE)  # U to LL
+            plotter.cropmark( cropTopEnable, plotter.TOP)
+            plotter.move(tab_2_notch, 0, plotter.NO_LINE)  # LL to U
+            plotter.move(0, -theTabHeight, intermediatePoint1)  # U  to V
+            plotter.move(0, -stackHeight, lineType)  # V  to W
+            plotter.move(-tab_2_notch, 0, intermediatePoint5)  # W  to X
+            plotter.move(0, -notch_height, intermediatePoint5)  # X  to Y
+            plotter.move(-notch_width1, 0, lineType)  # Y  to Z
+            plotter.move(0, notch_height, plotter.NO_LINE)  # Z to NN
+            plotter.cropmark( cropLeftEnable, plotter.LEFT)
+            plotter.move(0, theTabHeight + stackHeight, plotter.NO_LINE)  # NN to MM
+            plotter.cropmark( cropLeftEnable, plotter.LEFT)
+            plotter.cropmark( cropTopEnable, plotter.TOP)
+            plotter.move(0, -theTabHeight - stackHeight, plotter.NO_LINE)  # MM to NN
+            plotter.move(0, -notch_height, plotter.NO_LINE)  # NN to Z
+            plotter.cropmark( cropLeftEnable, plotter.LEFT)
+            plotter.move(0, -body_minus_notches, intermediatePoint4)  # Z  to AA
+            plotter.cropmark( cropLeftEnable, plotter.LEFT)
+            plotter.move(notch_width3, 0, intermediatePoint4)  # AA to BB
+            plotter.move(0, -notch_height, intermediatePoint1)  # BB to CC
+            plotter.move(0, -stackHeight, intermediatePoint1)  # CC to DD
+            plotter.move(0, -notch_height, intermediatePoint4)  # DD to EE
+            plotter.move(-notch_width3, 0, intermediatePoint4)  # EE to FF
+            plotter.cropmark( cropLeftEnable, plotter.LEFT)
+            plotter.move(0, -body_minus_notches, lineType) # FF to A
 
-            self.canvas.lines(DeltaXYtoLines(delta))
-
+            # Add fold lines
             self.canvas.setStrokeGray(0.9)
-            self.canvas.line(dividerWidth - side_2_tab,
-                             dividerHeight + dividerBaseHeight + stackHeight,
-                             dividerWidth - side_2_tab - theTabWidth,
-                             dividerHeight + dividerBaseHeight + stackHeight)
-            self.canvas.line(
-                dividerWidth - side_2_tab, dividerHeight + dividerBaseHeight +
-                2 * stackHeight, dividerWidth - side_2_tab - theTabWidth,
-                dividerHeight + dividerBaseHeight + 2 * stackHeight)
-            self.canvas.line(notch_width1, dividerHeight,
-                             dividerWidth - notch_width2, dividerHeight)
-            self.canvas.line(notch_width1, dividerHeight + stackHeight,
-                             dividerWidth - notch_width2,
-                             dividerHeight + stackHeight)
+            plotter.setXY(dividerWidth - side_2_tab, dividerHeight + stackHeight + dividerBaseHeight ) # to R
+            plotter.move(-theTabWidth, 0, plotter.LINE) # R to W
+            plotter.move(0, stackHeight) # W to V
+            plotter.move(theTabWidth, 0, plotter.LINE) # V to S
+
+            plotter.setXY( notch_width1, dividerHeight ) # to DD
+            plotter.move( dividerWidth - notch_width2 - notch_width1, 0, plotter.LINE ) # DD to L
+            plotter.move( 0, stackHeight) # L to M
+            plotter.move( -dividerWidth + notch_width2 + notch_width1, 0, plotter.LINE ) # M to CC
 
         self.canvas.restoreState()
-
-    def draw(self, cards, options):
-        self.options = options
-
-        self.registerFonts()
-        self.canvas = canvas.Canvas(
-            options.outfile,
-            pagesize=(options.paperwidth, options.paperheight))
-        self.drawDividers(cards)
-        self.canvas.save()
 
     def add_inline_images(self, text, fontsize):
         path = os.path.join(self.options.data_path, 'images')
@@ -228,78 +476,6 @@ class DividerDrawer(object):
         replace = replace % (path, fontsize * 1.2)
         text = re.sub('Potion', replace, text)
         return text
-
-    def drawOutline(self,
-                    card,
-                    x,
-                    y,
-                    rightSide,
-                    isBack=False):
-        # draw outline or cropmarks
-        self.canvas.saveState()
-        self.canvas.setLineWidth(self.options.linewidth)
-        cropmarksright = (x == self.options.numDividersHorizontal - 1)
-        cropmarksleft = (x == 0)
-        if rightSide:
-            self.canvas.translate(self.options.dividerWidth, 0)
-            self.canvas.scale(-1, 1)
-        if not self.options.cropmarks and not isBack:
-            # don't draw outline on back, in case lines don't line up with
-            # front
-            self.getOutline(card)
-
-        elif self.options.cropmarks and not self.options.wrapper:
-            cmw = 0.5 * cm
-
-            # Horizontal-line cropmarks
-            mirror = cropmarksright and not rightSide or cropmarksleft and rightSide
-            if mirror:
-                self.canvas.saveState()
-                self.canvas.translate(self.options.dividerWidth, 0)
-                self.canvas.scale(-1, 1)
-            if cropmarksleft or cropmarksright:
-                self.canvas.line(-2 * cmw, 0, -cmw, 0)
-                self.canvas.line(-2 * cmw, self.options.dividerBaseHeight,
-                                 -cmw, self.options.dividerBaseHeight)
-                if y > 0:
-                    self.canvas.line(-2 * cmw, self.options.dividerHeight,
-                                     -cmw, self.options.dividerHeight)
-            if mirror:
-                self.canvas.restoreState()
-
-            # Vertical-line cropmarks
-
-            # want to always draw the right-edge and middle-label-edge lines..
-            # ...and draw the left-edge if this is the first card on the left
-
-            # ...but we need to take mirroring into account, to know "where"
-            # to draw the left / right lines...
-            if rightSide:
-                leftLine = self.options.dividerWidth
-                rightLine = 0
-            else:
-                leftLine = 0
-                rightLine = self.options.dividerWidth
-            middleLine = self.options.dividerWidth - self.options.labelWidth
-
-            if y == 0:
-                self.canvas.line(rightLine, -2 * cmw, rightLine, -cmw)
-                self.canvas.line(middleLine, -2 * cmw, middleLine, -cmw)
-                if cropmarksleft:
-                    self.canvas.line(leftLine, -2 * cmw, leftLine, -cmw)
-            if y == self.options.numDividersVertical - 1:
-                self.canvas.line(rightLine, self.options.dividerHeight + cmw,
-                                 rightLine,
-                                 self.options.dividerHeight + 2 * cmw)
-                self.canvas.line(middleLine, self.options.dividerHeight + cmw,
-                                 middleLine,
-                                 self.options.dividerHeight + 2 * cmw)
-                if cropmarksleft:
-                    self.canvas.line(
-                        leftLine, self.options.dividerHeight + cmw, leftLine,
-                        self.options.dividerHeight + 2 * cmw)
-
-        self.canvas.restoreState()
 
     def drawCardCount(self, card, x, y, offset=-1):
         if card.count < 1:
@@ -704,51 +880,49 @@ class DividerDrawer(object):
 
         self.canvas.restoreState()
 
-    def drawDivider(self,
-                    card,
-                    x,
-                    y,
-                    isBack=False,
-                    divider_text="card",
-                    divider_text2="rules"):
-        # figure out whether the tab should go on the right side or not
-        if self.options.tab_side == "right":
-            rightSide = isBack
-        elif self.options.tab_side in ["left", "full"]:
-            rightSide = not isBack
-        else:
-            # alternate the cards
-            if not isBack:
-                rightSide = not self.odd
-            else:
-                rightSide = self.odd
+    def drawDivider(self, item, isBack=False):
+        # First save canvas state
+        self.canvas.saveState()
 
         # apply the transforms to get us to the corner of the current card
         self.canvas.resetTransforms()
+        pageWidth = self.options.paperwidth - (2 * self.options.horizontalMargin)
         self.canvas.translate(self.options.horizontalMargin,
                               self.options.verticalMargin)
         if isBack:
             self.canvas.translate(self.options.back_offset,
                                   self.options.back_offset_height)
-        self.canvas.translate(x * self.options.dividerWidthReserved,
-                              y * self.options.dividerHeightReserved)
+            pageWidth -= 2 * self.options.back_offset
+
+        item.translate(self.canvas, pageWidth, isBack)
 
         # actual drawing
         if not self.options.tabs_only:
-            self.drawOutline(card, x, y, rightSide, isBack)
+            self.drawOutline(item, isBack)
 
         if self.options.wrapper:
             wrap = "front"
+            isBack = False # Safety.  If a wrapper, there is no backside
         else:
             wrap = "no"
-        self.drawTab(card, rightSide, wrapper=wrap)
-        if not self.options.tabs_only:
-            self.drawText(card, divider_text, wrapper=wrap)
-            if self.options.wrapper:
-                self.drawTab(card, rightSide, wrapper="back")
-                self.drawText(card, divider_text2, wrapper="back")
 
-    def drawSetNames(self, pageCards):
+        rightSide = item.rightSide
+        cardText  = item.textTypeFront
+        if isBack:
+            rightSide = not rightSide
+            cardText  = item.textTypeBack
+
+        self.drawTab(item.card, rightSide, wrapper=wrap)
+        if not self.options.tabs_only:
+            self.drawText(item.card, cardText, wrapper=wrap)
+            if self.options.wrapper:
+                self.drawTab(item.card, rightSide, wrapper="back")
+                self.drawText(item.card, item.textTypeBack, wrapper="back")
+
+        # retore the canvas state to the way we found it
+        self.canvas.restoreState()
+
+    def drawSetNames(self, pageItems):
         # print sets for this page
         self.canvas.saveState()
 
@@ -793,8 +967,8 @@ class DividerDrawer(object):
             yPos = layout['minMarginHeight']
 
             sets = []
-            for c in pageCards:
-                setTitle = c.cardset.title()
+            for item in pageItems:
+                setTitle = item.card.cardset.title()
                 if setTitle not in sets:
                     sets.append(setTitle)
 
@@ -811,62 +985,280 @@ class DividerDrawer(object):
         finally:
             self.canvas.restoreState()
 
-    def drawDividers(self, cards):
-        # split into pages
-        cards = split(cards, self.options.numDividersVertical *
-                      self.options.numDividersHorizontal)
+    def getPageLayout(self, options):
+        #       Vertical Field                           Horizontal Field
+        #  +-------------------------------+     +-------------------------------+
+        #  | .-----.  extra   .-----.      |     | .-----.-----.   .-----.       |
+        #  | |     | .  .  .  |     |      |     | |     |     | . |     | .---. |
+        #  | .-----.horizontal.-----.      |     | .-----.-----.   .-----. |   | |
+        #  | .---.---.               .---. |     |                    .    |   | |
+        #  | |   |   |               |   | |     |       .       .    .    .---. |
+        #  | |   |   |  .  .  .  .  .|   | |     |       .  regular   .      e  v|
+        #  | .---.---.               .---. |     |       .  horizontal.      x  e|
+        #  |                               |     |       .  field     .      t  r|
+        #  |     .    regular          .   |     |       .       .    .    .-r-.t|
+        #  |     .    vertical         .   |     |                    .    | a |i|
+        #  |          field                |     | .-----.-----.   .-----. |   |c|
+        #  | .---.---.               .---. |     | |     |     | . |     | .---.a|
+        #  | |   |   |               |   | |     | .-----.-----.   .-----. |   |l|
+        #  | |   |   |  .  .  .  .  .|   | |     | |     |     | . |     | |   | |
+        #  | .---.---.               .---. |     | .-----.-----.   .-----. .---. |
+        #  +-------------------------------+     +-------------------------------+
+        #    If the top space that is not          If the right space that is not
+        #    tall enough to fit a another row      wide enough to fit another column
+        #    of vertical cards is tall enough      of horizontal cars is wide enough
+        #    to fit a horizontal row, then         to fit a vertical column, then
+        #    rotate cards and fill that row.       rotate cards and fill that column.
+        #
+        # Returns:
+        # layout['width']            = width of dividers
+        # layout['height']           = height of the dividers
+        # layout['rotation']         = rotation of the dividors in the main "field"
+        # layout['columns']          = the number of columns of dividors in the main "field"
+        # layout['rows']             = the number of rows of dividors in the main "field"
+        # layout['extra']            = the number of extra cards placed outside of the main "field"
+        # layout['extra_spacing']    = the amount of space to separate the field from the extra cards
+        # layout['extra_rotation']   = rotation of the dividors in the "extra" area
+        # layout['number']           = the total number of dividers on the page. i.e., rows * columns + extra
+        # layout['isHorizontal']     = True if page is a Horizontal Field, False if Vertical field
+        # layout['horizontalMargin'] = full horizontal margin for the page
+        # layout['verticalMargin']   = full vertical margin for the page
+
+        # First figure out the best layout...
+
+        isHorizontal = (options.dividerWidthReserved >= options.dividerHeightReserved )
+        field = {}
+        field['width']  = options.paperwidth  - ( 2 * options.minHorizontalMargin )
+        field['height'] = options.paperheight - ( 2 * options.minVerticalMargin )
+
+        # Figure out how much "extra space" to separate the field of cards from the extra cards.
+        # This is really only needed if crop marks are used.
+        # Otherwise the crop marks will bleed into the cards next door.
+        extra_spacing = 0
+        if options.cropmarks:
+            extra_spacing = 2 * ( options.cropmarkLength + options.cropmarkSpacing)
+
+        # For Horizontal/Vertical, there is a "natural" layout and an "alternate" layout
+        # We will be looking at both to see which one fits more cards on a page
+        horizontal = {}
+        vertical   = {}
+        if isHorizontal:
+            # The natural layout for Horizontal Cards
+            horizontal['width']  = options.dividerWidthReserved
+            horizontal['height'] = options.dividerHeightReserved
+            horizontal['rotation'] = 0
+            horizontal['extra_rotation'] = 270
+            # The alternate/rotated layout for Horizontal cards
+            vertical['width']  = options.dividerHeightReserved
+            vertical['height'] = options.dividerWidthReserved
+            vertical['rotation'] = 270
+            vertical['extra_rotation'] = 0
+        else:
+            # The natural layout for Vertical Cards
+            vertical['width']  = options.dividerWidthReserved
+            vertical['height'] = options.dividerHeightReserved
+            vertical['rotation'] = 0
+            vertical['extra_rotation'] = 270
+            # The alternate/rotated layout for Vertical cards
+            horizontal['width']  = options.dividerHeightReserved
+            horizontal['height'] = options.dividerWidthReserved
+            horizontal['rotation'] = 270
+            horizontal['extra_rotation'] = 0
+
+        # Initialize items for later
+        horizontal['extra'] = 0
+        vertical['extra']   = 0
+        horizontal['isHorizontal'] = True
+        vertical['isHorizontal']   = False
+
+        # Calculate the number of columns and rows of cards in the field
+        horizontal['columns'] = field['width'] // horizontal['width']
+        horizontal['rows']    = field['height'] // horizontal['height']
+        vertical['columns']   =  field['width'] // vertical['width']
+        vertical['rows']      = field['height'] // vertical['height']
+
+        # Calculate any unused margin
+        horizontal['marginwidth']  = ( field['width']  - ( horizontal['columns'] * horizontal['width']  ) ) / 2
+        horizontal['marginheight'] = ( field['height'] - ( horizontal['rows']    * horizontal['height'] ) ) / 2
+        vertical['marginwidth']    = ( field['width']  - ( vertical['columns']   * vertical['width']    ) ) / 2
+        vertical['marginheight']   = ( field['height'] - ( vertical['rows']      * vertical['height']   ) ) / 2
+
+        # Now see if we can fit any "extra" cards on the page
+        if options.optimize:
+            horizontal['leftover'] = field['width']  - (horizontal['width'] * horizontal['columns']) - extra_spacing
+            vertical['leftover']   = field['height'] - (vertical['height']  * vertical['rows'])      - extra_spacing
+
+            if horizontal['leftover'] >= horizontal['height']:
+                horizontal['extra'] = field['height'] // horizontal['width']
+                horizontal['marginwidth'] -= (horizontal['height'] + extra_spacing) / 2
+
+            if vertical['leftover'] >= vertical['width']:
+                vertical['extra'] = field['width'] // vertical['height']
+                vertical['marginheight'] -= (vertical['width'] + extra_spacing) / 2
+
+        # To make things easier, store the number of cards that can be plotted with each layout
+        horizontal['number'] = (horizontal['columns'] * horizontal['rows']) + horizontal['extra']
+        vertical['number']   = (vertical['columns']   * vertical['rows']  ) + vertical['extra']
+
+        # Now pick the layout to use.  A tie goes to the "natural" layout
+        layout = {}
+        if isHorizontal:
+            if options.optimize and vertical['number'] > horizontal['number']:
+                layout = vertical
+            else:
+                layout = horizontal
+        else:
+            if options.optimize and horizontal['number'] > vertical['number']:
+                layout = horizontal
+            else:
+                layout = vertical
+
+        layout['extra_spacing'] = extra_spacing
+        # Adjust the margins
+        layout['horizontalMargin'] = layout['marginwidth']  + options.minHorizontalMargin
+        layout['verticalMargin']   = layout['marginheight'] + options.minVerticalMargin
+        return layout
+
+    def convert2pages(self, layout, items=[]):
+        # Now that we have the layout, separate the items into pages
+        # and place the items on the page
+        items = split(items, int(layout['number']))
+        pages = []
+        for pageNum, pageItems in enumerate(items):
+            page = []
+            # first place items in the field
+            for i in range(0, int(layout['columns'] * layout['rows'])):
+                if pageItems:
+                    item = pageItems.pop(0)
+                    x = i % layout['columns']
+                    y = (layout['rows'] - 1) - ( i // layout['columns'] )
+                    item.x = x * layout['width']
+                    item.y = y * layout['height']
+                    item.rotation = layout['rotation']
+                    item.cropOnTop = (y == layout['rows'] - 1)
+                    item.cropOnBottom = (y == 0)
+                    item.cropOnLeft = (x == 0)
+                    item.cropOnRight = (x == layout['columns'] - 1)
+                    item.page = pageNum + 1
+                    page.append(item)
+            # Now place any extra cards
+            for i in range(0, int(layout['extra'])):
+                if pageItems:
+                    item = pageItems.pop(0)
+                    item.rotation = layout['extra_rotation']
+                    item.page = pageNum + 1
+                    if layout['isHorizontal']:
+                        item.x = (layout['columns'] * layout['width']) + layout['extra_spacing']
+                        item.y = i * layout['width']
+                        item.cropOnLeft = True
+                        item.cropOnRight = True
+                        item.CropOnBottom = (i == 0)
+                        item.CropOnTop = (i == layout['extra'] - 1)
+                    else:
+                        item.x = i * layout['height']
+                        item.y = (layout['rows'] * layout['height']) + layout['extra_spacing']
+                        item.cropOnTop = True
+                        item.cropOnBottom = True
+                        item.CropOnLeft = i == 0
+                        item.CropOnRight = i == layout['extra'] - 1
+                    page.append(item)
+            pages.append(page)
+        return pages
+
+    def setupCardPlots(self, options, cards=[]):
+        # First, set up common information for the dividers
+        # Doing a lot of this up front, while the cards are ordered
+        # just in case the dividers need to be reordered on the page.
+        # By setting up first, any tab or text flipping will be correct,
+        # even if the divider moves around a bit on the pages.
+
+        # Drawing line type
+        if options.cropmarks:
+            if 'dot' in options.linetype.lower():
+                lineType = 'dot' # Allow the DOTs if requested
+            else:
+                lineType = 'no_line'
+        else:
+            lineType = options.linetype.lower()
 
         # Starting with tabs on the left or the right?
-        if self.options.tab_side in ["right-alternate", "right"]:
-            self.odd = True
+        if "right" in options.tab_side:
+            tabOnLeft = False # right-alternate, right-alternate-text, right
         else:
-            # left-alternate, left, full
-            self.odd = False
+            tabOnLeft = True  # left-alternate, left-alternate-text, left, centre, full
 
-        for pageNum, pageCards in enumerate(cards):
-            # remember whether we start with odd or even divider for tab
-            # location
-            pageStartOdd = self.odd
+        startTabSide = tabOnLeft # Record the starting tab side
+
+        # Set up any alternating tabs and text
+        flipTab  = False  # When true, indicates that tabs need to be flipped right/left every other dividor
+        flipText = False  # When true, indicates that front/back text needs to be flipped every other dividor
+
+        if "-alternate" in options.tab_side:
+            flipTab  = True  # note that this will be true if flipText is True
+        if "-alternate-text" in options.tab_side:
+            flipText = True
+
+        # Now go through all the cards and create their plotter information record...
+        items = []
+        for card in cards:
+            if options.wrapper:
+                height = (2 * options.dividerHeightReserved) + (2 * card.getStackHeight(options.thickness))
+            else:
+                height = options.dividerHeightReserved
+
+            item = CardPlot(card,
+                            height = height,
+                            width = options.dividerWidthReserved,
+                            lineType = lineType,
+                            rightSide = tabOnLeft,
+                            textTypeFront = options.text_front,
+                            textTypeBack  = options.text_back
+                           )
+            if flipText and (tabOnLeft != startTabSide):
+                item.flipFront2Back() # Instead of flipping the tab, flip the whole divider front to back
+            items.append(item)
+            if flipTab:
+                tabOnLeft = not tabOnLeft
+
+        return items
+
+    def drawDividers(self, cards):
+
+        items = self.setupCardPlots(self.options, cards) # Turn cards into items to plot
+        layout = self.getPageLayout(self.options) # Get the best layout
+        self.options.horizontalMargin = layout['horizontalMargin']
+        self.options.verticalMargin   = layout['verticalMargin']
+        pages = self.convert2pages(layout, items) # now using the layout, turn into pages
+
+        # Now go page by page and print the dividers
+        for pageNum, page in enumerate(pages):
+
+            # Front page footer
             if not self.options.no_page_footer and (
                     not self.options.tabs_only and
                     self.options.order != "global"):
-                self.drawSetNames(pageCards)
-            for i, card in enumerate(pageCards):
-                # print card
-                x = i % self.options.numDividersHorizontal
-                y = i / self.options.numDividersHorizontal
-                self.canvas.saveState()
-                self.drawDivider(card,
-                                 x,
-                                 self.options.numDividersVertical - 1 - y,
-                                 isBack=False,
-                                 divider_text=self.options.text_front,
-                                 divider_text2=self.options.text_back)
-                self.canvas.restoreState()
-                self.odd = not self.odd
+                self.drawSetNames(page)
+
+            # Front page
+            for item in page:
+                # print the dividor
+                self.drawDivider(item, isBack=False)
             self.canvas.showPage()
             if pageNum + 1 == self.options.num_pages:
                 break
+
             if self.options.tabs_only or self.options.text_back == "none" or self.options.wrapper:
-                # Don't print the sheets with the back of the dividers
+                # Don't print the backside of the page
                 continue
+
+            # back page footer
             if not self.options.no_page_footer and self.options.order != "global":
-                self.drawSetNames(pageCards)
-            # start at same oddness
-            self.odd = pageStartOdd
-            for i, card in enumerate(pageCards):
-                # print card
-                x = (self.options.numDividersHorizontal - 1 - i
-                     ) % self.options.numDividersHorizontal
-                y = i / self.options.numDividersHorizontal
-                self.canvas.saveState()
-                self.drawDivider(card,
-                                 x,
-                                 self.options.numDividersVertical - 1 - y,
-                                 isBack=True,
-                                 divider_text=self.options.text_back)
-                self.canvas.restoreState()
-                self.odd = not self.odd
+                self.drawSetNames(page)
+
+            # Back page
+            for item in page:
+                # print the dividor
+                self.drawDivider(item, isBack=True)
             self.canvas.showPage()
             if pageNum + 1 == self.options.num_pages:
                 break
