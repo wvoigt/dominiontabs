@@ -640,6 +640,8 @@ def calculate_layout(options, cards=[]):
     add_opt(options, 'dividerBaseHeight', dividerBaseHeight)
     add_opt(options, 'dividerWidthReserved', dividerWidthReserved)
     add_opt(options, 'dividerHeightReserved', dividerHeightReserved)
+    add_opt(options, 'horizontalBorderSpace', horizontalBorderSpace)
+    add_opt(options, 'verticalBorderSpace', verticalBorderSpace)
     add_opt(options, 'labelWidth', labelWidth)
     add_opt(options, 'labelHeight', labelHeight)
     add_opt(options, 'notch_height', notch_height)

@@ -20,7 +20,7 @@ def split(l, n):
 
 class CardPlot(object):
 
-    def __init__(self, card, x=0, y=0, rotation=0, height=0, width=0, rightSide=False, page=0, lineType='line', textTypeFront="card", textTypeBack="rules", cropOnTop=False, cropOnBottom=False, cropOnLeft=False, cropOnRight=False):
+    def __init__(self, card, x=0, y=0, rotation=0, height=0, width=0, stackHeight=0, rightSide=False, page=0, lineType='line', textTypeFront="card", textTypeBack="rules", cropOnTop=False, cropOnBottom=False, cropOnLeft=False, cropOnRight=False, isTabCentred=False):
         self.card = card
         self.x = x # x location of the lower left corner of the card on the page
         self.y = y # y location of the lower left corner of the card on the page
@@ -28,6 +28,7 @@ class CardPlot(object):
         self.lineType = lineType # Type of outline to use: line, dot, none
         self.width = width # Width of the divider including any divider to divider spacing
         self.height = height # Height of the divider including any divider to divider spacing
+        self.stackHeight = stackHeight # The height of a stack of these cards. Used for interleaving.
         self.textTypeFront = textTypeFront #What card text to put on the front of the divider
         self.textTypeBack = textTypeBack #What card text to put on the back of the divider
         self.cropOnTop = cropOnTop #When true, cropmarks needed along TOP *printed* edge of the card
@@ -36,12 +37,13 @@ class CardPlot(object):
         self.cropOnRight = cropOnRight #When true, cropmarks needed along RIGHT *printed* edge of the card
         self.page = page # holds page number of this printed card
         self.rightSide = rightSide # When true, the card tab is flipped to the "other" side
+        self.isTabCentred = isTabCentred #When true, the tab is centered instead of on the right or left.
         self.LEFT, self.RIGHT, self.TOP, self.BOTTOM = range(1, 5) # directional constants
 
-    def setXY(self, x, y, rotation=-1):
+    def setXY(self, x, y, rotation=None):
         self.x = x
         self.y = y
-        if rotation != -1:
+        if rotation != None:
             self.rotation = rotation
 
     def rotate(self, delta):
@@ -184,6 +186,239 @@ class Plotter(object):
                 self.move(-self.CropMarkSpacing, 0)
                 self.move(-self.CropMarkLength, 0, self.LINE)
             self.setXY(x, y) # Restore to starting point
+
+
+class PageLayout(object):
+    #       Vertical Field                           Horizontal Field
+    #  +-------------------------------+     +-------------------------------+
+    #  | .-----.  extra   .-----.      |     | .-----.-----.   .-----.       |
+    #  | | r*c | .  .  .  |num-1|      |     | |  0  |  1  | . | c-1 | .---. |
+    #  | .-----.horizontal.-----.      |     | .-----.-----.   .-----. |num| |
+    #  | .---.---.               .---. |     |                    .    | -1| |
+    #  | | 0 | 1 |               |c-1| |     |       .       .    .    .---. |
+    #  | |   |   |  .  .  .  .  .|   | |     |       .  regular   .      e  v|
+    #  | .---.---.               .---. |     |       .  horizontal.      x  e|
+    #  |                               |     |       .  field     .      t  r|
+    #  |     .    regular          .   |     |       .       .    .    .-r-.t|
+    #  |     .    vertical         .   |     |                    .    | a |i|
+    #  |          field                |     | .-----.-----.   .-----. |   |c|
+    #  | .---.---.               .---. |     | |     |     | . |     | .---.a|
+    #  | |   |   |               |r*c| |     | .-----.-----.   .-----. |   |l|
+    #  | |   |   |  .  .  .  .  .| -1| |     | |     |     | . |r*c-1| |r*c| |
+    #  | .---.---.               .---. |     | .-----.-----.   .-----. .---. |
+    #  +-------------------------------+     +-------------------------------+
+    #    If the top space that is not          If the right space that is not
+    #    tall enough to fit a another row      wide enough to fit another column
+    #    of vertical cards is tall enough      of horizontal cars is wide enough
+    #    to fit a horizontal row, then         to fit a vertical column, then
+    #    rotate cards and fill that row.       rotate cards and fill that column.
+
+    # These are values that can be set once and then used by all instances
+    pageWidth    = 0     # width of the page.  Needs to be set.
+    pageHeight   = 0     # height of the page. Needs to be set.
+    extraSpacing = 0     # any extra spacing needed between the normal field of cards and the extra cards
+    minMarginH   = 0     # minimum horizontal margin on page
+    minMarginV   = 0     # minimum vertical margin on page
+    tabHeight    = 0     # the tab height.  Used for interleaving
+    tabWidth     = 0     # the tab width.  Used to check if interleaving is possible.
+    dividerWidth = 0     # the divider width.  Used to check if interleaving is possible.
+    isWrapper    = False # when true, the layout is for wrappers instead of dividers.
+    doExtra      = False # when true, will add extra rotated cards if there is space
+    doInterleave = False # when true, will also look at interleaving the tabs of cards in the field
+
+    def __init__(self, width=0, height=0, rotation=0, extraRotation=0, isHorizontal=True):
+        self.width = width
+        self.height = height
+        self.rotation = rotation
+        self.extraRotation = extraRotation
+        self.isHorizontal = isHorizontal
+        self.rows = 0
+        self.columns = 0
+        self.extra = 0
+        self.marginWidth = 0
+        self.marginHeight = 0
+        self.horizontalMargin = self.minMarginH
+        self.verticalMargin   = self.minMarginV
+        self.leftover = 0
+        self.number = 0
+        self.isInterleaved = False
+        self.calculate()
+
+    def calculate(self):
+        # Calculate the layout parameters
+        # This needs to be done any time any of the values change
+
+        # Take out minimum margins
+        usableWidth  = self.pageWidth  - (2 * self.minMarginH )
+        usableHeight = self.pageHeight - (2 * self. minMarginV )
+
+        # Calculate the number of columns and rows of cards in the field
+        self.columns = int(usableWidth // self.width)
+        self.rows    = int(usableHeight // self.height)
+
+        # Calculate any unused margin
+        self.marginWidth  = ( usableWidth -  ( self.columns * self.width  ) ) / 2
+        self.marginHeight = ( usableHeight - ( self.rows    * self.height ) ) / 2
+
+        # Now see if we can fit any "extra" cards on the page
+        if self.doExtra:
+            if self.isHorizontal:
+                self.leftover = usableWidth - ( self.width * self.columns) - self.extraSpacing
+                if self.leftover >= self.height:
+                    self.extra = int( usableHeight // self.width )
+                    extraMargin = (usableHeight - (self.extra * self.width)) / 2
+                    self.marginHeight = min(self.marginHeight, extraMargin)
+                    self.marginWidth -= (self.height + self.extraSpacing) / 2
+                    self.leftover -= self.height
+
+            else:
+                self.leftover = usableHeight - (self.height * self.rows)   - self.extraSpacing
+                if self.leftover >= self.width:
+                    self.extra = int( usableWidth // self.height )
+                    extraMargin = (usableWidth - (self.extra * self.height)) / 2
+                    self.marginWidth = min(self.marginWidth, extraMargin)
+                    self.marginHeight -= (self.width + self.extraSpacing) / 2
+                    self.leftover -= self.width
+
+        # To make things easier, store the number of cards that can be plotted with each layout
+        self.number = int((self.rows * self.columns) + self.extra)
+
+        # Provide the full margin values
+        self.horizontalMargin = self.marginWidth  + self.minMarginH
+        self.verticalMargin   = self.marginHeight + self.minMarginV
+
+        # NOTE: Below is the start of interleaving.  This needs to be completed
+
+        # Now that we have a baseline, see if we can interleave
+        if self.tabWidth > ( self.dividerWidth / 2 ):
+            self.doInterleave = False  # Interleaving is not possible since tab is too wide
+
+        if self.doInterleave:
+            # see how many pairs of interleaved cards fit
+            doubleHeight = 2 * self.height - self.tabHeight
+            doubles = int( usableHeight // doubleHeight )
+            singles = int( (usableHeight - (doubles * doubleHeight) ) // self.height)
+
+        return
+
+    def paginate(self, items=[], pageNumber=0):
+        # This returns a single page (list) of items to print.
+        # It takes all the CardPlot items for a page, sets up the CardPlot information
+        # and returns a list of items ready to print out on a page
+        # Note: This will become more complex when interleaving is implemented
+        #       since placement depends upon surounding items.
+
+        #fixup = items[:] # Save a copy for later
+        page = []
+        for i in range(0, self.number):
+            if items:
+                item = items.pop(0)
+                item = self.setItem(item, i, pageNumber)
+                page.append(item)
+
+        if self.doInterleave:
+            # Fix up everthings and interleave
+            pass
+            #Interleave testing
+            #if len(fixup) > 1:
+            #    fixup[0].rotate(90)
+            #    self.interleave(fixup[0], fixup[1])
+            #i1 = (self.rows * self.columns) -1
+            #i2 = i1 - self.columns
+            #if i2 >= 0 and i1 < len(fixup):
+            #    self.interleave(fixup[i1], fixup[i2])
+
+        return page
+
+    def setItem(self, item, itemOnPage=0, pageNumber=0, dx=0, dy=0):
+        # Given a CardPlot object called item, its number on the page, and the page number
+        # Return/set the items x,y,rotation, crop mark settings, and page number
+        # The primary field is filled up first, row by row, and then the extra area (if any)
+        # For x,y assume the canvas has already been adjusted for the margins
+        # dx, dy will be used when iterleaving is implemented
+        item.page = pageNumber
+        if itemOnPage < (self.columns * self.rows):
+            # In the main field of the page
+            item.rotation = self.rotation
+            x = itemOnPage % self.columns
+            y = (self.rows - 1) - ( itemOnPage // self.columns )
+            item.x = x * self.width + dx
+            item.y = y * self.height + dy
+            item.cropOnTop = (y == self.rows - 1)
+            item.cropOnBottom = (y == 0)
+            item.cropOnLeft = (x == 0)
+            item.cropOnRight = (x == self.columns - 1)
+        else:
+            # In the extra area
+            item.rotation = self.extraRotation
+            e = itemOnPage - (self.columns * self.rows) # e = extra item on page
+            if self.isHorizontal:
+                item.x = (self.columns * self.width) + self.extraSpacing + dx
+                item.y = e * self.width + dy
+                item.cropOnLeft   = True
+                item.cropOnRight  = True
+                item.CropOnBottom = (e == 0)
+                item.CropOnTop    = (e == self.extra - 1)
+            else:
+                item.x = e * self.height + dx
+                item.y = (self.rows * self.height) + self.extraSpacing + dy
+                item.cropOnTop    = True
+                item.cropOnBottom = True
+                item.CropOnLeft   = (e == 0)
+                item.CropOnRight  = (e == self.extra - 1)
+        return item
+
+    def interleave(self,item1, item2, dx=0, dy=0):
+        # Interleave the 2nd card with the 1st card and move 1st card dx,dy
+        # Returns the total height of the two cards after any interleaving
+        item1.setXY(item1.x + dx, item1.y + dy)
+
+        # We take our cues on how to interleave from item1
+        # So item2 is always placed "on top" of the tab
+        # of item1, no matter which way item1 is rotated
+
+        # Get the cards close (but not interleaved) and in the same rotation
+        # Why, because we haven't checked to see if we can interleave them.
+        # And this at least gets them as close as possible otherwise
+        adjustment = self.tabHeight
+        if self.isWrapper and (item1.rightSide == item2.rightSide):
+            #special case where wrapper tabs will be interleaved
+            adjustment = self.tabHeight + min(item1.stackHeight, item2.stackHeight)
+
+        if item1.rotation == 0:
+            item2.setXY(item1.x, item1.y + item1.height, item1.rotation)
+            interleave_x, interleave_y = 0, -adjustment
+        elif item1.rotation == 90:
+            item2.setXY(item1.x + item1.height, item1.y, item1.rotation)
+            interleave_x, interleave_y = -adjustment, 0
+        elif item1.rotation == 180:
+            item2.setXY(item1.x, item1.y - item1.height, item1.rotation)
+            interleave_x, interleave_y = 0, adjustment
+        elif item1.rotation == 270:
+            item2.setXY(item1.x - item1.height, item1.y, item1.rotation)
+            interleave_x, interleave_y = adjustment, 0
+        else:
+            item1.setXY(item1.x, item1.y, 0)
+            item2.setXY(item1.x, item1.y + item1.height, item1.rotation)
+            interleave_x, interleave_y = 0, adjustment
+
+        if item1.isTabCentred or item2.isTabCentred or ( (self.dividerWidth / 2) < self.tabWidth):
+            # Can't interleave, so we are done
+            return item1.height + item2.height
+
+        # Set the rotation of the 2nd card
+        if self.isWrapper:
+            if item1.rightSide == item2.rightSide:
+                item2.rotate(180)
+        else:
+            # Normal Dividors
+            item2.rotate(180)
+            if item1.rightSide != item2.rightSide:
+                item2.flipFront2Back
+
+        # Now interleave
+        item2.setXY(item2.x + interleave_x, item2.y + interleave_y)
+        return item1.height + item2.height - adjustment
 
 class DividerDrawer(object):
     def __init__(self):
@@ -985,184 +1220,74 @@ class DividerDrawer(object):
         finally:
             self.canvas.restoreState()
 
-    def getPageLayout(self, options):
-        #       Vertical Field                           Horizontal Field
-        #  +-------------------------------+     +-------------------------------+
-        #  | .-----.  extra   .-----.      |     | .-----.-----.   .-----.       |
-        #  | |     | .  .  .  |     |      |     | |     |     | . |     | .---. |
-        #  | .-----.horizontal.-----.      |     | .-----.-----.   .-----. |   | |
-        #  | .---.---.               .---. |     |                    .    |   | |
-        #  | |   |   |               |   | |     |       .       .    .    .---. |
-        #  | |   |   |  .  .  .  .  .|   | |     |       .  regular   .      e  v|
-        #  | .---.---.               .---. |     |       .  horizontal.      x  e|
-        #  |                               |     |       .  field     .      t  r|
-        #  |     .    regular          .   |     |       .       .    .    .-r-.t|
-        #  |     .    vertical         .   |     |                    .    | a |i|
-        #  |          field                |     | .-----.-----.   .-----. |   |c|
-        #  | .---.---.               .---. |     | |     |     | . |     | .---.a|
-        #  | |   |   |               |   | |     | .-----.-----.   .-----. |   |l|
-        #  | |   |   |  .  .  .  .  .|   | |     | |     |     | . |     | |   | |
-        #  | .---.---.               .---. |     | .-----.-----.   .-----. .---. |
-        #  +-------------------------------+     +-------------------------------+
-        #    If the top space that is not          If the right space that is not
-        #    tall enough to fit a another row      wide enough to fit another column
-        #    of vertical cards is tall enough      of horizontal cars is wide enough
-        #    to fit a horizontal row, then         to fit a vertical column, then
-        #    rotate cards and fill that row.       rotate cards and fill that column.
-        #
-        # Returns:
-        # layout['width']            = width of dividers
-        # layout['height']           = height of the dividers
-        # layout['rotation']         = rotation of the dividors in the main "field"
-        # layout['columns']          = the number of columns of dividors in the main "field"
-        # layout['rows']             = the number of rows of dividors in the main "field"
-        # layout['extra']            = the number of extra cards placed outside of the main "field"
-        # layout['extra_spacing']    = the amount of space to separate the field from the extra cards
-        # layout['extra_rotation']   = rotation of the dividors in the "extra" area
-        # layout['number']           = the total number of dividers on the page. i.e., rows * columns + extra
-        # layout['isHorizontal']     = True if page is a Horizontal Field, False if Vertical field
-        # layout['horizontalMargin'] = full horizontal margin for the page
-        # layout['verticalMargin']   = full vertical margin for the page
+    def getPageLayout(self, options, maxHeight = -1):
 
-        # First figure out the best layout...
-
-        isHorizontal = (options.dividerWidthReserved >= options.dividerHeightReserved )
-        field = {}
-        field['width']  = options.paperwidth  - ( 2 * options.minHorizontalMargin )
-        field['height'] = options.paperheight - ( 2 * options.minVerticalMargin )
-
-        # Figure out how much "extra space" to separate the field of cards from the extra cards.
-        # This is really only needed if crop marks are used.
-        # Otherwise the crop marks will bleed into the cards next door.
-        extra_spacing = 0
+        # set up the PageLayout
+        PageLayout.pageWidth     = options.paperwidth
+        PageLayout.pageHeight    = options.paperheight
+        PageLayout.tabHeight     = options.dividerHeight - options.dividerBaseHeight
+        PageLayout.tabWidth      = self.options.labelWidth
+        PageLayout.dividerWidth  = options.dividerWidth
+        PageLayout.doExtra       = options.optimize
+        PageLayout.doInterleave  = False # FIX: change to new interleave option
+        PageLayout.isWrapper     = options.wrapper
+        PageLayout.minMarginH    = options.minHorizontalMargin
+        PageLayout.minMarginV    = options.minVerticalMargin
         if options.cropmarks:
-            extra_spacing = 2 * ( options.cropmarkLength + options.cropmarkSpacing)
+            PageLayout.extraSpacing = 2 * ( options.cropmarkLength + options.cropmarkSpacing)
+
+        if maxHeight < 0:
+            maxHeight = options.dividerHeightReserved
+        else:
+            maxHeight = maxHeight
+        maxWidth = options.dividerWidthReserved
+
+        isHorizontal = (options.dividerWidthReserved >= maxHeight )
 
         # For Horizontal/Vertical, there is a "natural" layout and an "alternate" layout
         # We will be looking at both to see which one fits more cards on a page
-        horizontal = {}
-        vertical   = {}
         if isHorizontal:
             # The natural layout for Horizontal Cards
-            horizontal['width']  = options.dividerWidthReserved
-            horizontal['height'] = options.dividerHeightReserved
-            horizontal['rotation'] = 0
-            horizontal['extra_rotation'] = 270
+            horizontal = PageLayout(isHorizontal = True,  width = maxWidth,  height = maxHeight, rotation = 0,   extraRotation = 270)
             # The alternate/rotated layout for Horizontal cards
-            vertical['width']  = options.dividerHeightReserved
-            vertical['height'] = options.dividerWidthReserved
-            vertical['rotation'] = 270
-            vertical['extra_rotation'] = 0
+            vertical   = PageLayout(isHorizontal = False, width = maxHeight, height = maxWidth,  rotation = 90, extraRotation = 0)
         else:
             # The natural layout for Vertical Cards
-            vertical['width']  = options.dividerWidthReserved
-            vertical['height'] = options.dividerHeightReserved
-            vertical['rotation'] = 0
-            vertical['extra_rotation'] = 270
+            vertical   = PageLayout(isHorizontal = False, width = maxWidth, height = maxHeight,  rotation = 0, extraRotation = 90)
             # The alternate/rotated layout for Vertical cards
-            horizontal['width']  = options.dividerHeightReserved
-            horizontal['height'] = options.dividerWidthReserved
-            horizontal['rotation'] = 270
-            horizontal['extra_rotation'] = 0
+            horizontal = PageLayout(isHorizontal = True,  width = maxHeight,  height = maxWidth, rotation = 270,   extraRotation = 0)
 
-        # Initialize items for later
-        horizontal['extra'] = 0
-        vertical['extra']   = 0
-        horizontal['isHorizontal'] = True
-        vertical['isHorizontal']   = False
-
-        # Calculate the number of columns and rows of cards in the field
-        horizontal['columns'] = field['width'] // horizontal['width']
-        horizontal['rows']    = field['height'] // horizontal['height']
-        vertical['columns']   =  field['width'] // vertical['width']
-        vertical['rows']      = field['height'] // vertical['height']
-
-        # Calculate any unused margin
-        horizontal['marginwidth']  = ( field['width']  - ( horizontal['columns'] * horizontal['width']  ) ) / 2
-        horizontal['marginheight'] = ( field['height'] - ( horizontal['rows']    * horizontal['height'] ) ) / 2
-        vertical['marginwidth']    = ( field['width']  - ( vertical['columns']   * vertical['width']    ) ) / 2
-        vertical['marginheight']   = ( field['height'] - ( vertical['rows']      * vertical['height']   ) ) / 2
-
-        # Now see if we can fit any "extra" cards on the page
-        if options.optimize:
-            horizontal['leftover'] = field['width']  - (horizontal['width'] * horizontal['columns']) - extra_spacing
-            vertical['leftover']   = field['height'] - (vertical['height']  * vertical['rows'])      - extra_spacing
-
-            if horizontal['leftover'] >= horizontal['height']:
-                horizontal['extra'] = field['height'] // horizontal['width']
-                horizontal['marginwidth'] -= (horizontal['height'] + extra_spacing) / 2
-
-            if vertical['leftover'] >= vertical['width']:
-                vertical['extra'] = field['width'] // vertical['height']
-                vertical['marginheight'] -= (vertical['width'] + extra_spacing) / 2
-
-        # To make things easier, store the number of cards that can be plotted with each layout
-        horizontal['number'] = (horizontal['columns'] * horizontal['rows']) + horizontal['extra']
-        vertical['number']   = (vertical['columns']   * vertical['rows']  ) + vertical['extra']
-
-        # Now pick the layout to use.  A tie goes to the "natural" layout
-        layout = {}
+        # Now pick the layout to use.  A tie goes to the layout with fewest extras
         if isHorizontal:
-            if options.optimize and vertical['number'] > horizontal['number']:
+            if options.optimize and (vertical.number == horizontal.number):
+                if vertical.extra <  horizontal.extra:
+                    layout = vertical
+                else:
+                    layout = horizontal
+            elif options.optimize and (vertical.number > horizontal.number):
                 layout = vertical
             else:
                 layout = horizontal
         else:
-            if options.optimize and horizontal['number'] > vertical['number']:
+            if options.optimize and (horizontal.number == vertical.number):
+                if horizontal.extra < vertical.extra:
+                    layout = horizontal
+                else:
+                    layout = vertical
+            if options.optimize and (horizontal.number > vertical.number):
                 layout = horizontal
             else:
                 layout = vertical
 
-        layout['extra_spacing'] = extra_spacing
-        # Adjust the margins
-        layout['horizontalMargin'] = layout['marginwidth']  + options.minHorizontalMargin
-        layout['verticalMargin']   = layout['marginheight'] + options.minVerticalMargin
         return layout
 
     def convert2pages(self, layout, items=[]):
-        # Now that we have the layout, separate the items into pages
-        # and place the items on the page
-        items = split(items, int(layout['number']))
+        # Take the layout and all the items and separate the items into pages.
+        # Each item will have all its plotting information filled in.
+        items = split(items, layout.number) # Note: can be just one page
         pages = []
         for pageNum, pageItems in enumerate(items):
-            page = []
-            # first place items in the field
-            for i in range(0, int(layout['columns'] * layout['rows'])):
-                if pageItems:
-                    item = pageItems.pop(0)
-                    x = i % layout['columns']
-                    y = (layout['rows'] - 1) - ( i // layout['columns'] )
-                    item.x = x * layout['width']
-                    item.y = y * layout['height']
-                    item.rotation = layout['rotation']
-                    item.cropOnTop = (y == layout['rows'] - 1)
-                    item.cropOnBottom = (y == 0)
-                    item.cropOnLeft = (x == 0)
-                    item.cropOnRight = (x == layout['columns'] - 1)
-                    item.page = pageNum + 1
-                    page.append(item)
-            # Now place any extra cards
-            for i in range(0, int(layout['extra'])):
-                if pageItems:
-                    item = pageItems.pop(0)
-                    item.rotation = layout['extra_rotation']
-                    item.page = pageNum + 1
-                    if layout['isHorizontal']:
-                        item.x = (layout['columns'] * layout['width']) + layout['extra_spacing']
-                        item.y = i * layout['width']
-                        item.cropOnLeft = True
-                        item.cropOnRight = True
-                        item.CropOnBottom = (i == 0)
-                        item.CropOnTop = (i == layout['extra'] - 1)
-                    else:
-                        item.x = i * layout['height']
-                        item.y = (layout['rows'] * layout['height']) + layout['extra_spacing']
-                        item.cropOnTop = True
-                        item.cropOnBottom = True
-                        item.CropOnLeft = i == 0
-                        item.CropOnRight = i == layout['extra'] - 1
-                    page.append(item)
-            pages.append(page)
+            pages.append(layout.paginate(pageItems, pageNum + 1))
         return pages
 
     def setupCardPlots(self, options, cards=[]):
@@ -1195,14 +1320,14 @@ class DividerDrawer(object):
 
         if "-alternate" in options.tab_side:
             flipTab  = True  # note that this will be true if flipText is True
-        if "-alternate-text" in options.tab_side:
-            flipText = True
+        if "-alternate-text" in options.tab_side and not options.wrapper:
+            flipText = True  # note can't flip wrappers from front to back
 
         # Now go through all the cards and create their plotter information record...
         items = []
         for card in cards:
             if options.wrapper:
-                height = (2 * options.dividerHeightReserved) + (2 * card.getStackHeight(options.thickness))
+                height = (2 * (options.dividerHeight + card.getStackHeight(options.thickness)) ) + options.verticalBorderSpace
             else:
                 height = options.dividerHeightReserved
 
@@ -1212,7 +1337,9 @@ class DividerDrawer(object):
                             lineType = lineType,
                             rightSide = tabOnLeft,
                             textTypeFront = options.text_front,
-                            textTypeBack  = options.text_back
+                            textTypeBack  = options.text_back,
+                            isTabCentred  = self.wantCentreTab(card),
+                            stackHeight   = card.getStackHeight(options.thickness)
                            )
             if flipText and (tabOnLeft != startTabSide):
                 item.flipFront2Back() # Instead of flipping the tab, flip the whole divider front to back
@@ -1226,9 +1353,46 @@ class DividerDrawer(object):
 
         items = self.setupCardPlots(self.options, cards) # Turn cards into items to plot
         layout = self.getPageLayout(self.options) # Get the best layout
-        self.options.horizontalMargin = layout['horizontalMargin']
-        self.options.verticalMargin   = layout['verticalMargin']
-        pages = self.convert2pages(layout, items) # now using the layout, turn into pages
+        self.options.horizontalMargin = layout.horizontalMargin
+        self.options.verticalMargin   = layout.verticalMargin
+        if not self.options.wrapper or not self.options.optimize:
+            # Normal Dividors and Labels
+            pages = self.convert2pages(layout, items) # now using the layout, turn into pages
+        else:
+            # Wrappers
+            minNumber = layout.number # fit at least this many each page
+            pages = [] # holds the pages of items
+            pageOffset = 1 # Since we are doing this a page at a time, this helps keep track of the page number
+            while items:
+                # Work on each page, one at a time
+                thisLayout = layout # start with default layout
+                itemsPage = [] # holds items for this page
+                for i in range(minNumber): # Load up the minimum number of items
+                    if items:
+                        itemsPage.append(items.pop(0))
+                maxHeight = max(i.height for i in itemsPage) #Get the tallest
+                tryForMore = True
+                while tryForMore and items:
+                    # see if we can add one more item to page
+                    tryHeight = max(maxHeight, items[0].height) # look at next item's height, want tallest
+                    tryLayout = self.getPageLayout(self.options, tryHeight) # try a new layout
+                    if tryLayout.number > thisLayout.number:
+                        # It is a better layout
+                        tryLayout.number = thisLayout.number + 1 # only +1, since we only looked one ahead
+                        if tryLayout.number > (tryLayout.rows * tryLayout.columns):
+                            tryLayout.extra = tryLayout.number - ( tryLayout.rows * tryLayout.columns )
+                        else:
+                            tryLayout.extra = 0
+                        thisLayout = tryLayout # Use this for future compares
+                        maxHeight = tryHeight
+                        itemsPage.append(items.pop(0)) # Add the item to the page
+                    else:
+                        tryForMore = False
+                pages.append(thisLayout.paginate(itemsPage, pageOffset )) # add this one page
+                pageOffset += 1
+                # Ultimately use the most restrictive margin from all the pages
+                self.options.horizontalMargin = min(self.options.horizontalMargin, thisLayout.horizontalMargin)
+                self.options.verticalMargin   = min(self.options.verticalMargin,   thisLayout.verticalMargin)
 
         # Now go page by page and print the dividers
         for pageNum, page in enumerate(pages):
@@ -1241,15 +1405,13 @@ class DividerDrawer(object):
 
             # Front page
             for item in page:
-                # print the dividor
-                self.drawDivider(item, isBack=False)
+                self.drawDivider(item, isBack=False) # print the dividor
             self.canvas.showPage()
             if pageNum + 1 == self.options.num_pages:
                 break
 
             if self.options.tabs_only or self.options.text_back == "none" or self.options.wrapper:
-                # Don't print the backside of the page
-                continue
+                continue # Don't print the backside of the page
 
             # back page footer
             if not self.options.no_page_footer and self.options.order != "global":
@@ -1257,8 +1419,7 @@ class DividerDrawer(object):
 
             # Back page
             for item in page:
-                # print the dividor
-                self.drawDivider(item, isBack=True)
+                self.drawDivider(item, isBack=True) # print the dividor
             self.canvas.showPage()
             if pageNum + 1 == self.options.num_pages:
                 break
