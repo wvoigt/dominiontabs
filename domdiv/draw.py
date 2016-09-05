@@ -214,24 +214,25 @@ class PageLayout(object):
     #    rotate cards and fill that row.       rotate cards and fill that column.
 
     # These are values that can be set once and then used by all instances
-    pageWidth    = 0     # width of the page.  Needs to be set.
-    pageHeight   = 0     # height of the page. Needs to be set.
-    extraSpacing = 0     # any extra spacing needed between the normal field of cards and the extra cards
-    minMarginH   = 0     # minimum horizontal margin on page
-    minMarginV   = 0     # minimum vertical margin on page
-    tabHeight    = 0     # the tab height.  Used for interleaving
-    tabWidth     = 0     # the tab width.  Used to check if interleaving is possible.
-    dividerWidth = 0     # the divider width.  Used to check if interleaving is possible.
-    isWrapper    = False # when true, the layout is for wrappers instead of dividers.
-    doExtra      = False # when true, will add extra rotated cards if there is space
-    doInterleave = False # when true, will also look at interleaving the tabs of cards in the field
+    pageWidth       = 0     # width of the page.  Needs to be set.
+    pageHeight      = 0     # height of the page. Needs to be set.
+    extraSpacing    = 0     # any extra spacing needed between the normal field of cards and the extra cards
+    minMarginH      = 0     # minimum horizontal margin on page
+    minMarginV      = 0     # minimum vertical margin on page
+    tabHeight       = 0     # the tab height.  Used for interleaving
+    tabWidth        = 0     # the tab width.  Used to check if interleaving is possible.
+    dividerWidth    = 0     # the divider width.  Used to check if interleaving is possible.
+    tabIsHorizontal = True  # When True, tab is on the long side of the divider (horizontal).  False, tab is on the short side (vertical)
+    isWrapper       = False # when True, the layout is for wrappers instead of dividers.
+    doExtra         = False # when True, will add extra rotated cards if there is space
+    doInterleave    = False # when True, will also look at interleaving the tabs of cards in the field
 
-    def __init__(self, width=0, height=0, rotation=0, extraRotation=0, isHorizontal=True):
+    def __init__(self, width=0, height=0, rotation=0, extraRotation=0, layoutIsHorizontal=True):
         self.width = width
         self.height = height
         self.rotation = rotation
         self.extraRotation = extraRotation
-        self.isHorizontal = isHorizontal
+        self.layoutIsHorizontal = layoutIsHorizontal
         self.rows = 0
         self.columns = 0
         self.extra = 0
@@ -262,7 +263,7 @@ class PageLayout(object):
 
         # Now see if we can fit any "extra" cards on the page
         if self.doExtra:
-            if self.isHorizontal:
+            if self.layoutIsHorizontal:
                 self.leftover = usableWidth - ( self.width * self.columns) - self.extraSpacing
                 if self.leftover >= self.height:
                     self.extra = int( usableHeight // self.width )
@@ -305,28 +306,78 @@ class PageLayout(object):
         # This returns a single page (list) of items to print.
         # It takes all the CardPlot items for a page, sets up the CardPlot information
         # and returns a list of items ready to print out on a page
-        # Note: This will become more complex when interleaving is implemented
-        #       since placement depends upon surounding items.
 
-        #fixup = items[:] # Save a copy for later
+        # Make general assignment of items on the page
         page = []
-        for i in range(0, self.number):
-            if items:
-                item = items.pop(0)
-                item = self.setItem(item, i, pageNumber)
-                page.append(item)
+        for i in range(self.number):
+            if items and i < len(items):
+                page.append(self.setItem(items[i], i, pageNumber))
 
         if self.doInterleave:
-            # Fix up everthings and interleave
-            pass
-            #Interleave testing
-            #if len(fixup) > 1:
-            #    fixup[0].rotate(90)
-            #    self.interleave(fixup[0], fixup[1])
-            #i1 = (self.rows * self.columns) -1
-            #i2 = i1 - self.columns
-            #if i2 >= 0 and i1 < len(fixup):
-            #    self.interleave(fixup[i1], fixup[i2])
+            # Note: This section makes use of Python's variables pointing to one object.
+            #       So items assigned to page are also updated in 'field' and 'extras'.
+
+            # Convert list of items into an 2 dimentinal array for later use
+            field = [[None] * self.columns for i in range(self.rows)]
+            for row in range(self.rows):
+                for column in range(self.columns):
+                    i = row*self.columns + column
+                    if i < len(items):
+                        field[row][column] = items[i]
+
+            # Now save the extra ones
+            fieldsize = self.rows * self.columns
+            extras = []
+            if len(items) > fieldsize:
+                for i in range(fieldsize, self.number):
+                    extras.append(items[i])
+
+            # Figure out if we are interleaving by column (going up)
+            # or if we are interleaving by row (going right)
+            if ( (self.layoutIsHorizontal and self.tabIsHorizontal) or
+                 (not self.layoutIsHorizontal and not self.tabIsHorizontal) or
+                 (not self.layoutIsHorizontal and self.isWrapper) ):
+               doUpDown = True
+            else:
+               doUpDown = False
+
+            interleaveList = []
+            if doUpDown:
+                for column in range(self.columns):
+                    slice = []
+                    for row in range(self.rows):
+                        if field[row][column] != None:
+                            slice.append( field[row][column] )
+                    interleaveList.append( slice )
+            else:
+                for row in range(self.rows):
+                    slice = []
+                    for column in range(self.columns):
+                        if field[row][column] != None:
+                            slice.append( field[row][column] )
+                    interleaveList.append( slice )
+
+            newHeight = 0
+            for swipe in interleaveList:
+                delta = self.interleaveList(swipe, doUpDown)
+                newHeight = max(newHeight, delta)
+
+            # Adjust the "extra" ones (the leftover items) to be next to interleaved ones
+            if extras:
+                # Adjust all relative to the rest of the field
+                for i in extras:
+                    if self.layoutIsHorizontal:
+                        i.x = newHeight + self.extraSpacing
+                    else:
+                        i.y = newHeight + self.extraSpacing
+
+                # Interleave, but only vertical tabed dividers can be interleaved
+                if (not self.tabIsHorizontal or self.isWrapper):
+                    if self.layoutIsHorizontal:
+                        doUpDown = True
+                    else:
+                        doUpDown = False
+                    delta = self.interleaveList(extras, doUpDown)
 
         return page
 
@@ -352,7 +403,7 @@ class PageLayout(object):
             # In the extra area
             item.rotation = self.extraRotation
             e = itemOnPage - (self.columns * self.rows) # e = extra item on page
-            if self.isHorizontal:
+            if self.layoutIsHorizontal:
                 item.x = (self.columns * self.width) + self.extraSpacing + dx
                 item.y = e * self.width + dy
                 item.cropOnLeft   = True
@@ -368,10 +419,55 @@ class PageLayout(object):
                 item.CropOnRight  = (e == self.extra - 1)
         return item
 
-    def interleave(self,item1, item2, dx=0, dy=0):
+    def interleaveList(self, items, isUpDown=True, isPositive=True):
+        height = 0
+        if not items:
+            return 0
+        if isPositive:
+            sign = 1
+        else:
+            sign = -1
+
+        # Start with location of first item
+        x, y = items[0].x, items[0].y
+        # But make sure it starts on the edge
+        if isUpDown:
+            y = 0
+        else:
+            x = 0
+
+        # First interleave pairs of dividors
+        count = len(items)
+        while items and count > 1:
+            i1 = items.pop(0)
+            i2 = items.pop(0)
+            count -= 2
+            delta = self.interleave(i1, i2, x, y)
+            height =+ sign * delta
+            if isUpDown:
+                y += sign * delta
+            else:
+                x += sign * delta
+
+        # Now work on leftover singles
+        while items:
+            i1 = items.pop(0)
+            i1.setXY( x, y)
+            height =+ sign * i1.height
+            if isUpDown:
+                y += sign * i1.height
+            else:
+                x += sign * i1.height
+
+        return height
+
+    def interleave(self,item1, item2, x=None, y=None):
         # Interleave the 2nd card with the 1st card and move 1st card dx,dy
         # Returns the total height of the two cards after any interleaving
-        item1.setXY(item1.x + dx, item1.y + dy)
+        if x is None or y is None:
+            pass
+        else:
+            item1.setXY(x, y)
 
         # We take our cues on how to interleave from item1
         # So item2 is always placed "on top" of the tab
@@ -1223,16 +1319,17 @@ class DividerDrawer(object):
     def getPageLayout(self, options, maxHeight = -1):
 
         # set up the PageLayout
-        PageLayout.pageWidth     = options.paperwidth
-        PageLayout.pageHeight    = options.paperheight
-        PageLayout.tabHeight     = options.dividerHeight - options.dividerBaseHeight
-        PageLayout.tabWidth      = self.options.labelWidth
-        PageLayout.dividerWidth  = options.dividerWidth
-        PageLayout.doExtra       = options.optimize
-        PageLayout.doInterleave  = False # FIX: change to new interleave option
-        PageLayout.isWrapper     = options.wrapper
-        PageLayout.minMarginH    = options.minHorizontalMargin
-        PageLayout.minMarginV    = options.minVerticalMargin
+        PageLayout.pageWidth       = options.paperwidth
+        PageLayout.pageHeight      = options.paperheight
+        PageLayout.tabHeight       = options.dividerHeight - options.dividerBaseHeight
+        PageLayout.tabWidth        = self.options.labelWidth
+        PageLayout.dividerWidth    = options.dividerWidth
+        PageLayout.doExtra         = options.optimize
+        PageLayout.doInterleave    = True # FIX: change to new interleave option
+        PageLayout.isWrapper       = options.wrapper
+        PageLayout.minMarginH      = options.minHorizontalMargin
+        PageLayout.minMarginV      = options.minVerticalMargin
+        PageLayout.tabIsHorizontal = options.orientation == "horizontal"
         if options.cropmarks:
             PageLayout.extraSpacing = 2 * ( options.cropmarkLength + options.cropmarkSpacing)
 
@@ -1242,23 +1339,23 @@ class DividerDrawer(object):
             maxHeight = maxHeight
         maxWidth = options.dividerWidthReserved
 
-        isHorizontal = (options.dividerWidthReserved >= maxHeight )
+        layoutIsHorizontal = (options.dividerWidthReserved >= maxHeight )
 
         # For Horizontal/Vertical, there is a "natural" layout and an "alternate" layout
         # We will be looking at both to see which one fits more cards on a page
-        if isHorizontal:
+        if layoutIsHorizontal:
             # The natural layout for Horizontal Cards
-            horizontal = PageLayout(isHorizontal = True,  width = maxWidth,  height = maxHeight, rotation = 0,   extraRotation = 270)
+            horizontal = PageLayout(layoutIsHorizontal = True,  width = maxWidth,  height = maxHeight, rotation = 0,   extraRotation = 90)
             # The alternate/rotated layout for Horizontal cards
-            vertical   = PageLayout(isHorizontal = False, width = maxHeight, height = maxWidth,  rotation = 90, extraRotation = 0)
+            vertical   = PageLayout(layoutIsHorizontal = False, width = maxHeight, height = maxWidth,  rotation = 90, extraRotation = 0)
         else:
             # The natural layout for Vertical Cards
-            vertical   = PageLayout(isHorizontal = False, width = maxWidth, height = maxHeight,  rotation = 0, extraRotation = 90)
+            vertical   = PageLayout(layoutIsHorizontal = False, width = maxWidth, height = maxHeight,  rotation = 0, extraRotation = 90)
             # The alternate/rotated layout for Vertical cards
-            horizontal = PageLayout(isHorizontal = True,  width = maxHeight,  height = maxWidth, rotation = 270,   extraRotation = 0)
+            horizontal = PageLayout(layoutIsHorizontal = True,  width = maxHeight,  height = maxWidth, rotation = 90,   extraRotation = 0)
 
         # Now pick the layout to use.  A tie goes to the layout with fewest extras
-        if isHorizontal:
+        if layoutIsHorizontal:
             if options.optimize and (vertical.number == horizontal.number):
                 if vertical.extra <  horizontal.extra:
                     layout = vertical
