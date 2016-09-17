@@ -16,7 +16,8 @@ TAB_SIDE_CHOICES = ["left", "right", "left-alternate", "right-alternate",
                     "left-alternate-text", "right-alternate-text", "centre", "full"]
 TEXT_CHOICES = ["card", "rules", "blank"]
 LINE_CHOICES = ["line", "dot", "cropmarks", "dot-cropmarks"]
-
+OPTIMIZE_CHOICES = ["none", "all", "rotate", "rotate-extra", "rotate-interleave",
+                    "extra-interleave", "extra", "interleave"]
 
 def add_opt(options, option, value):
     assert not hasattr(options, option)
@@ -281,10 +282,19 @@ def parse_opts(arglist):
         default=0.1,
         help="Spacing between card and the start of the cropmark in centimeters."
         " default:0.1")
-    parser.add_argument("--optimize",
-                        action="store_true",
-                        dest="optimize",
-                        help="will optimize the number of dividers on a page.  Dividors may have mixed rotations.")
+    parser.add_argument(
+        "--optimize",
+        choices=OPTIMIZE_CHOICES,
+        dest="optimize",
+        default="none",
+        help="Optimization levels to fit more dividers on a page. "
+        "choices: none, all, rotate, rotate-extra, rotate-interleave, extra-interleave, extra, interleave;"
+        " 'none' is no extra optimzation;"
+        " 'rotate' allows the dividers to be rotated to fit more on a page;"
+        " 'extra' allows an extra row of rotated dividers if there is room on the page;"
+        " 'interleave' allows rotating dividers to face tab to tab if it fits more on a page;"
+        " 'all' trys all optimizations and chooses the one that fits the most on a page;"
+        " default: none")
 
     options = parser.parse_args(arglist)
     if not options.cost:
@@ -309,6 +319,19 @@ def parse_opts(arglist):
 
     options.cropmarkSpacing *= cm
     options.cropmarkLength  *= cm
+
+    if options.optimize == 'none':
+        options.optimize_rotate     = False
+        options.optimize_extra      = False
+        options.optimize_interleave = False
+    elif options.optimize == 'all':
+        options.optimize_rotate     = True
+        options.optimize_extra      = True
+        options.optimize_interleave = True
+    else:
+        options.optimize_rotate     = 'rotate'     in  options.optimize
+        options.optimize_extra      = 'extra'      in  options.optimize
+        options.optimize_interleave = 'interleave' in  options.optimize
 
     return options
 

@@ -227,78 +227,160 @@ class PageLayout(object):
     doExtra         = False # when True, will add extra rotated cards if there is space
     doInterleave    = False # when True, will also look at interleaving the tabs of cards in the field
 
-    def __init__(self, width=0, height=0, rotation=0, extraRotation=0, layoutIsHorizontal=True):
-        self.width = width
-        self.height = height
-        self.rotation = rotation
-        self.extraRotation = extraRotation
-        self.layoutIsHorizontal = layoutIsHorizontal
-        self.rows = 0
-        self.columns = 0
-        self.extra = 0
-        self.marginWidth = 0
-        self.marginHeight = 0
-        self.horizontalMargin = self.minMarginH
-        self.verticalMargin   = self.minMarginV
-        self.leftover = 0
-        self.number = 0
-        self.isInterleaved = False
-        self.calculate()
+    def __init__(self, width=0, height=0, rotation=0, extraRotation=0, layoutIsHorizontal=True, tryInterleave=False):
+        self.width = width                             # divider width (including any tab)
+        self.height = height                           # divider height (including any tab)
+        self.rotation = rotation                       # rotation value for the field
+        self.extraRotation = extraRotation             # rotation value for extra row/column
+        self.layoutIsHorizontal = layoutIsHorizontal   # Horizontal if True, Vertical if False
+        self.rows = 0                                  # number of rows in the field
+        self.columns = 0                               # number of columns in the field
+        self.extra = 0                                 # number of extra dividers
+        self.marginWidth = 0                           # horizontal margin of usable space (does not include minimum margin)
+        self.marginHeight = 0                          # vertical margin of usable space (does not include minimum margin)
+        self.horizontalMargin = self.minMarginH        # horizontal margin of page (includes minimum margin)
+        self.verticalMargin   = self.minMarginV        # vertical margin of page (includes minimum margin)
+        self.leftover = 0                              # the amount of space left over from the side that could include extras
+        self.number = 0                                # total number of dividers supported by this layout
+        self.tryInterleave = tryInterleave             # whether to try to interleave this layour or not
+        self.isInterleaved = False                     # whether this layout is interleaved
 
-    def calculate(self):
+        # Now do the calculations
+        self.calculate()  # Get the base number that will fit, no interleaving
+        if self.tryInterleave:
+            non_interleave_number = self.number # Save for comparison
+            self.calculate(interleave=True)
+            if non_interleave_number >= self.number:
+                self.calculate() # It was better with the base number, redo it.
+
+    def calculate(self, interleave=False):
         # Calculate the layout parameters
-        # This needs to be done any time any of the values change
+
+        # See if we can interleave
+        if ( (self.tabWidth > ( self.dividerWidth / 2 )) or not self.doInterleave):
+            self.tryInterleave = False  # Interleaving is not possible since tab is too wide
+        self.isInterleaved = interleave and self.tryInterleave # Only do interleave if asked and possible
 
         # Take out minimum margins
         usableWidth  = self.pageWidth  - (2 * self.minMarginH )
         usableHeight = self.pageHeight - (2 * self. minMarginV )
 
-        # Calculate the number of columns and rows of cards in the field
-        self.columns = int(usableWidth // self.width)
-        self.rows    = int(usableHeight // self.height)
+        # First get the field rows and columns
+        if not self.isInterleaved:
+            self.columns = int(usableWidth // self.width)
+            self.rows    = int(usableHeight // self.height)
+            field_width  = self.columns * self.width
+            field_height = self.rows    * self.height
+        else:
+            # Figure out if we are interleaving by column (going up)
+            # or if we are interleaving by row (going right)
+            if ( (self.layoutIsHorizontal and self.tabIsHorizontal) or
+                 (not self.layoutIsHorizontal and not self.tabIsHorizontal) or
+                 (not self.layoutIsHorizontal and self.isWrapper) ):
+               doUpDown = True
+            else:
+               doUpDown = False
 
-        # Calculate any unused margin
-        self.marginWidth  = ( usableWidth -  ( self.columns * self.width  ) ) / 2
-        self.marginHeight = ( usableHeight - ( self.rows    * self.height ) ) / 2
+            # see how many dividers of interleaved cards fit in the field
+            # Pairs of dividers can be interleaved, then any remaining singles
+            if doUpDown:
+                # Interleaving going from bottom to top
+                doubleHeight = 2 * self.height - self.tabHeight
+                doubles = int( usableHeight // doubleHeight )
+                singles = int( (usableHeight - (doubles * doubleHeight) ) // self.height)
+
+                self.rows = int (doubles * 2 + singles)
+                self.columns = int(usableWidth // self.width)
+                field_width  = self.columns * self.width
+                field_height = (doubles * doubleHeight) + (singles * self.height)
+            else:
+                # Interleaving going left to right
+                doubleHeight = 2 * self.height - self.tabHeight
+                doubles = int( usableWidth // doubleHeight )
+                singles = int( (usableWidth - (doubles * doubleHeight) ) // self.height)
+
+                self.columns = int (doubles * 2 + singles)
+                self.rows    = int(usableHeight // self.width)
+                field_height = self.rows * self.width
+                field_width  = (doubles * doubleHeight) + (singles * self.height)
+
+        self.marginHeight = (usableHeight - field_height) / 2
+        self.marginWidth  = (usableWidth  - field_width)  / 2
 
         # Now see if we can fit any "extra" cards on the page
+        self.extra  = 0
+        extraMargin = 0
+        extraLength = 0
         if self.doExtra:
             if self.layoutIsHorizontal:
-                self.leftover = usableWidth - ( self.width * self.columns) - self.extraSpacing
+                # Layout is Horizontal
+                self.leftover = usableWidth - field_width - self.extraSpacing
                 if self.leftover >= self.height:
-                    self.extra = int( usableHeight // self.width )
-                    extraMargin = (usableHeight - (self.extra * self.width)) / 2
-                    self.marginHeight = min(self.marginHeight, extraMargin)
-                    self.marginWidth -= (self.height + self.extraSpacing) / 2
-                    self.leftover -= self.height
+                    # There is space to have a rotated divider
+                    if self.isInterleaved and (not self.tabIsHorizontal or self.isWrapper):
+                        # Can only interleave the extra area if the tabs are vertical (and all wrappers are)
+                        doubleWidth = (2 * self.width) - self.tabHeight
+                        doubles = int( usableHeight // doubleWidth )
+                        singles = int( (usableHeight - (doubles * doubleWidth) ) // self.width)
+                        self.extra  = int( 2 * doubles + singles)
+                        extraLength = (doubles * doubleWidth) + (singles * self.width)
+                        extraMargin = (usableHeight - extraLength ) / 2
+                    else:
+                        # All non-interleaved cases
+                        self.extra = int( usableHeight // self.width )
+                        extraLength = self.extra * self.width
+                        extraMargin = (usableHeight - extraLength) / 2
+
+                    if self.extra > 0:
+                        self.marginHeight = min(self.marginHeight, extraMargin)
+                        self.leftover = usableWidth  - field_width - self.height - self.extraSpacing
+                        self.marginWidth  = self.leftover / 2
 
             else:
-                self.leftover = usableHeight - (self.height * self.rows)   - self.extraSpacing
+                # Layout is Vertical
+                self.leftover = usableHeight - field_height - self.extraSpacing
                 if self.leftover >= self.width:
-                    self.extra = int( usableWidth // self.height )
-                    extraMargin = (usableWidth - (self.extra * self.height)) / 2
-                    self.marginWidth = min(self.marginWidth, extraMargin)
-                    self.marginHeight -= (self.width + self.extraSpacing) / 2
-                    self.leftover -= self.width
+                    # There is space to have a rotated divider
+                    if self.isInterleaved and (not self.tabIsHorizontal or self.isWrapper):
+                        # Can only interleave the extra area if the tabs are vertical (and all wrappers are)
+                        doubleHeight = (2 * self.height) - self.tabHeight
+                        doubles = int( usableWidth // doubleHeight )
+                        singles = int( (usableWidth - (doubles * doubleHeight) ) // self.height)
+                        self.extra = int( 2 * doubles + singles)
+                        extraLength = (doubles * doubleHeight) + (singles * self.height)
+                        extraMargin = (usableWidth - extraLength ) / 2
+                    else:
+                        # All non-interleaved cases
+                        self.extra = int( usableWidth // self.height )
+                        extraLength = self.extra * self.height
+                        extraMargin = (usableWidth - extraLength) / 2
 
-        # To make things easier, store the number of cards that can be plotted with each layout
+                    if self.extra > 0:
+                        self.marginWidth = min(self.marginWidth, extraMargin)
+                        self.leftover = usableHeight - field_height - self.width - self.extraSpacing
+                        self.marginHeight = self.leftover / 2
+
+        # To make comparisons easier, store the total number of dividors that can be plotted with this layout
         self.number = int((self.rows * self.columns) + self.extra)
 
-        # Provide the full margin values
+        # Provide the full margin values including the provided minimum margin
         self.horizontalMargin = self.marginWidth  + self.minMarginH
         self.verticalMargin   = self.marginHeight + self.minMarginV
 
-        # NOTE: Below is the start of interleaving.  This needs to be completed
-
-        # Now that we have a baseline, see if we can interleave
-        if self.tabWidth > ( self.dividerWidth / 2 ):
-            self.doInterleave = False  # Interleaving is not possible since tab is too wide
-
-        if self.doInterleave:
-            # see how many pairs of interleaved cards fit
-            doubleHeight = 2 * self.height - self.tabHeight
-            doubles = int( usableHeight // doubleHeight )
-            singles = int( (usableHeight - (doubles * doubleHeight) ) // self.height)
+        # For debugging
+        #if self.isInterleaved:
+        #    print "~~~~Interleaved~~~~~~~~~~~~~~~~~~~~~~~~~~"
+        #else:
+        #    print "~~~~Regular~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+        #print 'usableWidth: %3.2f usableHeight:%3.2f' % (usableWidth, usableHeight)
+        #print 'field_width: %3.2f field_height:%3.2f' % (field_width, field_height)
+        #print 'columns:     %3.2f rows:        %3.2f' % (self.columns, self.rows)
+        #print 'width:       %3.2f height:      %3.2f' % (self.width, self.height)
+        #print 'tab:         %3.2f extraspacing %3.2f' % (self.tabHeight, self.extraSpacing)
+        #print 'marginWidth: %3.2f marginHeight:%3.2f' % ((usableWidth  - field_width)  / 2, (usableHeight - field_height) / 2)
+        #print 'extra:       %3.2f extraMargin: %3.2f' % (self.extra, extraMargin)
+        #print 'leftover:    %3.2f extraLength: %3.2f' % (self.leftover, extraLength)
+        #print 'marginWidth: %3.2f marginHeight:%3.2f' % (self.horizontalMargin, self.verticalMargin)
 
         return
 
@@ -313,7 +395,7 @@ class PageLayout(object):
             if items and i < len(items):
                 page.append(self.setItem(items[i], i, pageNumber))
 
-        if self.doInterleave:
+        if self.isInterleaved:
             # Note: This section makes use of Python's variables pointing to one object.
             #       So items assigned to page are also updated in 'field' and 'extras'.
 
@@ -379,7 +461,7 @@ class PageLayout(object):
                         doUpDown = False
                     delta = self.interleaveList(extras, doUpDown)
 
-        return page
+        return (self.horizontalMargin, self.verticalMargin, page)
 
     def setItem(self, item, itemOnPage=0, pageNumber=0, dx=0, dy=0):
         # Given a CardPlot object called item, its number on the page, and the page number
@@ -420,6 +502,7 @@ class PageLayout(object):
         return item
 
     def interleaveList(self, items, isUpDown=True, isPositive=True):
+        # Interleave a list of items
         height = 0
         if not items:
             return 0
@@ -1211,15 +1294,20 @@ class DividerDrawer(object):
 
         self.canvas.restoreState()
 
-    def drawDivider(self, item, isBack=False):
+    def drawDivider(self, item, isBack=False, horizontalMargin=-1, verticalMargin=-1):
         # First save canvas state
         self.canvas.saveState()
 
+        # Make sure we use the right margins
+        if horizontalMargin < 0:
+            horizontalMargin = self.options.horizontalMargin
+        if verticalMargin < 0:
+            verticalMargin = self.options.verticalMargin
+
         # apply the transforms to get us to the corner of the current card
         self.canvas.resetTransforms()
-        pageWidth = self.options.paperwidth - (2 * self.options.horizontalMargin)
-        self.canvas.translate(self.options.horizontalMargin,
-                              self.options.verticalMargin)
+        pageWidth = self.options.paperwidth - (2 * horizontalMargin)
+        self.canvas.translate(horizontalMargin,verticalMargin)
         if isBack:
             self.canvas.translate(self.options.back_offset,
                                   self.options.back_offset_height)
@@ -1316,7 +1404,7 @@ class DividerDrawer(object):
         finally:
             self.canvas.restoreState()
 
-    def getPageLayout(self, options, maxHeight = -1):
+    def getPageLayout(self, options, maxHeight = -1, tryInterleave = False):
 
         # set up the PageLayout
         PageLayout.pageWidth       = options.paperwidth
@@ -1324,8 +1412,8 @@ class DividerDrawer(object):
         PageLayout.tabHeight       = options.dividerHeight - options.dividerBaseHeight
         PageLayout.tabWidth        = self.options.labelWidth
         PageLayout.dividerWidth    = options.dividerWidth
-        PageLayout.doExtra         = options.optimize
-        PageLayout.doInterleave    = True # FIX: change to new interleave option
+        PageLayout.doExtra         = options.optimize_extra
+        PageLayout.doInterleave    = options.optimize_interleave
         PageLayout.isWrapper       = options.wrapper
         PageLayout.minMarginH      = options.minHorizontalMargin
         PageLayout.minMarginV      = options.minVerticalMargin
@@ -1345,33 +1433,41 @@ class DividerDrawer(object):
         # We will be looking at both to see which one fits more cards on a page
         if layoutIsHorizontal:
             # The natural layout for Horizontal Cards
-            horizontal = PageLayout(layoutIsHorizontal = True,  width = maxWidth,  height = maxHeight, rotation = 0,   extraRotation = 90)
+            horizontal = PageLayout(layoutIsHorizontal=True,
+                                    width=maxWidth, height=maxHeight, rotation=0, extraRotation=90,
+                                    tryInterleave=tryInterleave)
             # The alternate/rotated layout for Horizontal cards
-            vertical   = PageLayout(layoutIsHorizontal = False, width = maxHeight, height = maxWidth,  rotation = 90, extraRotation = 0)
+            vertical   = PageLayout(layoutIsHorizontal= False,
+                                    width=maxHeight, height=maxWidth, rotation=90, extraRotation=0,
+                                    tryInterleave=tryInterleave)
         else:
             # The natural layout for Vertical Cards
-            vertical   = PageLayout(layoutIsHorizontal = False, width = maxWidth, height = maxHeight,  rotation = 0, extraRotation = 90)
+            vertical   = PageLayout(layoutIsHorizontal=False,
+                                    width=maxWidth, height=maxHeight, rotation=0, extraRotation=90,
+                                    tryInterleave=tryInterleave)
             # The alternate/rotated layout for Vertical cards
-            horizontal = PageLayout(layoutIsHorizontal = True,  width = maxHeight,  height = maxWidth, rotation = 90,   extraRotation = 0)
+            horizontal = PageLayout(layoutIsHorizontal=True,
+                                    width=maxHeight, height=maxWidth, rotation=90, extraRotation=0,
+                                    tryInterleave=tryInterleave)
 
         # Now pick the layout to use.  A tie goes to the layout with fewest extras
         if layoutIsHorizontal:
-            if options.optimize and (vertical.number == horizontal.number):
+            if options.optimize_rotate and (vertical.number == horizontal.number):
                 if vertical.extra <  horizontal.extra:
                     layout = vertical
                 else:
                     layout = horizontal
-            elif options.optimize and (vertical.number > horizontal.number):
+            elif options.optimize_rotate and (vertical.number > horizontal.number):
                 layout = vertical
             else:
                 layout = horizontal
         else:
-            if options.optimize and (horizontal.number == vertical.number):
+            if options.optimize_rotate and (horizontal.number == vertical.number):
                 if horizontal.extra < vertical.extra:
                     layout = horizontal
                 else:
                     layout = vertical
-            if options.optimize and (horizontal.number > vertical.number):
+            if options.optimize_rotate and (horizontal.number > vertical.number):
                 layout = horizontal
             else:
                 layout = vertical
@@ -1449,14 +1545,14 @@ class DividerDrawer(object):
     def drawDividers(self, cards):
 
         items = self.setupCardPlots(self.options, cards) # Turn cards into items to plot
-        layout = self.getPageLayout(self.options) # Get the best layout
+        layout = self.getPageLayout(self.options, tryInterleave = False) # Get the best "simple" layout that is the same page to page
         self.options.horizontalMargin = layout.horizontalMargin
         self.options.verticalMargin   = layout.verticalMargin
-        if not self.options.wrapper or not self.options.optimize:
-            # Normal Dividors and Labels
+        if not (self.options.wrapper or self.options.optimize_interleave):
+            # Normal Dividors and Labels that are the same for every page
             pages = self.convert2pages(layout, items) # now using the layout, turn into pages
         else:
-            # Wrappers
+            # Wrappers and interleaved dividers
             minNumber = layout.number # fit at least this many each page
             pages = [] # holds the pages of items
             pageOffset = 1 # Since we are doing this a page at a time, this helps keep track of the page number
@@ -1472,7 +1568,13 @@ class DividerDrawer(object):
                 while tryForMore and items:
                     # see if we can add one more item to page
                     tryHeight = max(maxHeight, items[0].height) # look at next item's height, want tallest
-                    tryLayout = self.getPageLayout(self.options, tryHeight) # try a new layout
+
+                    # Check to see if any of the dividers has a centre tab
+                    # If so, we don't want to interleave, since it throws off the layout calculations
+                    hasCenterTab = any(x.isTabCentred == True for x in itemsPage) or items[0].isTabCentred
+                    tryInterleave = self.options.optimize_interleave and not hasCenterTab
+
+                    tryLayout = self.getPageLayout(self.options, tryHeight, tryInterleave) # try a new layout
                     if tryLayout.number > thisLayout.number:
                         # It is a better layout
                         tryLayout.number = thisLayout.number + 1 # only +1, since we only looked one ahead
@@ -1492,7 +1594,8 @@ class DividerDrawer(object):
                 self.options.verticalMargin   = min(self.options.verticalMargin,   thisLayout.verticalMargin)
 
         # Now go page by page and print the dividers
-        for pageNum, page in enumerate(pages):
+        for pageNum, pageInfo in enumerate(pages):
+            hMargin, vMargin, page = pageInfo
 
             # Front page footer
             if not self.options.no_page_footer and (
@@ -1502,7 +1605,7 @@ class DividerDrawer(object):
 
             # Front page
             for item in page:
-                self.drawDivider(item, isBack=False) # print the dividor
+                self.drawDivider(item, isBack=False, horizontalMargin=hMargin, verticalMargin=vMargin) # print the dividor
             self.canvas.showPage()
             if pageNum + 1 == self.options.num_pages:
                 break
@@ -1516,7 +1619,7 @@ class DividerDrawer(object):
 
             # Back page
             for item in page:
-                self.drawDivider(item, isBack=True) # print the dividor
+                self.drawDivider(item, isBack=True, horizontalMargin=hMargin, verticalMargin=vMargin) # print the dividor
             self.canvas.showPage()
             if pageNum + 1 == self.options.num_pages:
                 break
