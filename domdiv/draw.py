@@ -19,6 +19,9 @@ def split(l, n):
     yield l[i:]
 
 class CardPlot(object):
+    # This object contains information needed to print a divider on a page.
+    # It goes beyond information about the general card/divider to include page specific drawing information.
+    # It also includes helpful methods used in manipulating the object.
 
     def __init__(self, card, x=0, y=0, rotation=0, height=0, width=0, stackHeight=0, rightSide=False, page=0, lineType='line', textTypeFront="card", textTypeBack="rules", cropOnTop=False, cropOnBottom=False, cropOnLeft=False, cropOnRight=False, isTabCentred=False):
         self.card = card
@@ -41,6 +44,7 @@ class CardPlot(object):
         self.LEFT, self.RIGHT, self.TOP, self.BOTTOM = range(1, 5) # directional constants
 
     def setXY(self, x, y, rotation=None):
+        # set the card to the given x,y and optional rotation
         self.x = x
         self.y = y
         if rotation != None:
@@ -135,6 +139,11 @@ class CardPlot(object):
             return False # just in case
 
 class Plotter(object):
+    # Creates a simple plotting object that goes from point to point.
+    # This makes outline drawing easier since calculations only need to be the delta from
+    # one point to the next.  The default plotting in reportlab requires both
+    # ends of the line in absolute sense.  Thus calculations can become increasingly more
+    # complicated given various options.  Using this object simplifies the calculations significantly.
 
     def __init__(self, canvas, x=0, y=0, cropmarkLength=-1, cropmarkSpacing=-1):
         self.canvas = canvas
@@ -189,6 +198,10 @@ class Plotter(object):
 
 
 class PageLayout(object):
+    # Calculate the layout for a page given constraints
+    # Given that cards/dividers are rectangular, layouts can be either
+    # predominantly Horizontal or Vertical.
+    #
     #       Vertical Field                           Horizontal Field
     #  +-------------------------------+     +-------------------------------+
     #  | .-----.  extra   .-----.      |     | .-----.-----.   .-----.       |
@@ -213,7 +226,7 @@ class PageLayout(object):
     #    to fit a horizontal row, then         to fit a vertical column, then
     #    rotate cards and fill that row.       rotate cards and fill that column.
 
-    # These are values that can be set once and then used by all instances
+    # These are values that can be set once and then used by all PageLayout instances
     pageWidth       = 0     # width of the page.  Needs to be set.
     pageHeight      = 0     # height of the page. Needs to be set.
     extraSpacing    = 0     # any extra spacing needed between the normal field of cards and the extra cards
@@ -502,7 +515,8 @@ class PageLayout(object):
         return item
 
     def interleaveList(self, items, isUpDown=True, isPositive=True):
-        # Interleave a list of items
+        # Interleave a list of items, all in the same direction
+        # This is done by interleaving pairs, then adjusting any remaining singles
         height = 0
         if not items:
             return 0
@@ -593,7 +607,7 @@ class PageLayout(object):
             # Normal Dividors
             item2.rotate(180)
             if item1.rightSide != item2.rightSide:
-                item2.flipFront2Back
+                item2.flipFront2Back()
 
         # Now interleave
         item2.setXY(item2.x + interleave_x, item2.y + interleave_y)
@@ -683,13 +697,13 @@ class DividerDrawer(object):
 
         if lineType == plotter.DOT:
             intermediatePoint1 = plotter.NO_LINE
-        if side_2_tab == 0:
+        if side_2_tab < 0.01:
             intermediatePoint2 = intermediatePoint1
-        if notch_width2 == 0:
+        if notch_width2 < 0.01:
             intermediatePoint3 = intermediatePoint1
-        if notch_width1 == 0:
+        if notch_width1 < 0.01:
             intermediatePoint4 = intermediatePoint1
-        if notch_height == 0:
+        if notch_height < 0.01 or notch_width1 < 0.01:
             intermediatePoint5 = intermediatePoint1
 
         cropRightEnable  = self.options.cropmarks and item.translateCropmarkEnable(item.RIGHT)
@@ -790,7 +804,7 @@ class DividerDrawer(object):
             plotter.move(0, -theTabHeight, plotter.NO_LINE) # C to II
             plotter.cropmark( cropBottomEnable, plotter.BOTTOM)
             plotter.move(0, theTabHeight, plotter.NO_LINE) # II to C
-            plotter.move(tab_2_notch, 0, lineType)  # C  to D
+            plotter.move(tab_2_notch, 0, intermediatePoint5)  # C  to D
             plotter.move(0, -theTabHeight, lineType)  # D  to E
             plotter.cropmark( cropBottomEnable, plotter.BOTTOM)
             plotter.move(theTabWidth, 0, lineType)  # E  to F
@@ -833,7 +847,7 @@ class DividerDrawer(object):
             plotter.move(0, -stackHeight, lineType)  # V  to W
             plotter.move(-tab_2_notch, 0, intermediatePoint5)  # W  to X
             plotter.move(0, -notch_height, intermediatePoint5)  # X  to Y
-            plotter.move(-notch_width1, 0, lineType)  # Y  to Z
+            plotter.move(-notch_width1, 0, intermediatePoint5)  # Y  to Z
             plotter.move(0, notch_height, plotter.NO_LINE)  # Z to NN
             plotter.cropmark( cropLeftEnable, plotter.LEFT)
             plotter.move(0, theTabHeight + stackHeight, plotter.NO_LINE)  # NN to MM

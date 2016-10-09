@@ -730,7 +730,7 @@ def generate(options, data_path):
         options.paperwidth / cm, options.paperheight / cm)
     print "Tab dimensions: {:.2f}cm (w) x {:.2f}cm (h)".format(
         options.dividerWidthReserved / cm, options.dividerHeightReserved / cm)
-    print '{} dividers horizontally, {} vertically'.format(
+    print 'Minimum {} dividers horizontally, {} vertically'.format(
         options.numDividersHorizontal, options.numDividersVertical)
     print "Margins: {:.2f}cm h, {:.2f}cm v\n".format(
         options.horizontalMargin / cm, options.verticalMargin / cm)
